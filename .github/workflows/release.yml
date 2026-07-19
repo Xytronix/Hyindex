@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build shadow JARs
+        working-directory: hyve-plugin
+        run: ./gradlew :indexer-cli:shadowJar :mcp-server:shadowJar :embeddings-local:shadowJar
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            hyve-plugin/indexer-cli/build/libs/hyve-knowledge-indexer.jar
+            hyve-plugin/mcp-server/build/libs/hyve-knowledge-mcp.jar
+            hyve-plugin/embeddings-local/build/libs/hyve-embeddings-local.jar
+          generate_release_notes: true

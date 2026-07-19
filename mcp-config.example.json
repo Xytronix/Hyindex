@@ -1,0 +1,15 @@
+{
+  "embeddingProvider": "voyage",
+  "embeddingBaseUrl": "https://api.voyageai.com",
+  "embeddingApiKey": "",
+  "embeddingCodeModel": "voyage-code-3",
+  "embeddingTextModel": "voyage-4-large",
+  "embeddingDimensions": null,
+  "rerankerEnabled": false,
+  "rerankerModel": "rerank-2.5",
+  "rerankerTopN": 50,
+  "gitRepoUrl": "https://github.com/HypixelStudios/hytale-shared-source.git",
+  "gitToken": null,
+  "activeVersion": null,
+  "retentionCount": 3
+}

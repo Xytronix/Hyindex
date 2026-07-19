@@ -1,0 +1,23 @@
+{"tool":"search_hytale_code","query":"swap items between containers","expectedIds":["ItemContainer#swapItems"]}
+{"tool":"search_hytale_code","query":"HytaleLogger create forEnclosingClass getLogger","expectedIds":["logger.HytaleLogger"]}
+{"tool":"search_hytale_code","query":"ParallelRangeTask ForkJoinPool parallelism","expectedIds":["task.ParallelRangeTask"]}
+{"tool":"search_hytale_code","query":"get player inventory","expectedIds":["getInventory"]}
+{"tool":"search_hytale_code","query":"set a block in the world","expectedIds":["setBlock"]}
+{"tool":"search_hytale_code","query":"move item stack between inventory sections","expectedIds":["InventoryUtils#moveItem"]}
+{"tool":"search_hytale_code","query":"add item stack to a container","expectedIds":["ItemContainer#addItemStack"]}
+{"tool":"search_hytale_code","query":"can add item stack to slot check","expectedIds":["ItemContainer#canAddItemStackToSlot"]}
+{"tool":"search_hytale_code","query":"remove item stack from a container","expectedIds":["ItemContainer#removeItemStack"]}
+{"tool":"search_hytale_code","query":"spawn an npc entity into the world","expectedIds":["NPCPlugin#spawn"]}
+{"tool":"search_hytale_gamedata","query":"iron sword weapon damage","expectedIds":["Weapon_Sword_Iron"]}
+{"tool":"search_hytale_gamedata","query":"crafting recipe workbench","expectedIds":["Bench_"]}
+{"tool":"search_hytale_gamedata","query":"iron longsword weapon","expectedIds":["Weapon_Longsword_Iron"]}
+{"tool":"search_hytale_gamedata","query":"alchemist workbench for potions","expectedIds":["Bench_Alchemy"]}
+{"tool":"search_hytale_gamedata","query":"purple wool cloth","expectedIds":["Cloth_Block_Wool_Purple"]}
+{"tool":"search_hytale_gamedata","query":"entity max health stat","expectedIds":["Health"]}
+{"tool":"search_hytale_docs","query":"how to create a custom block","expectedIds":["creating-block"]}
+{"tool":"search_hytale_docs","query":"creating event listeners for a mod","expectedIds":["creating-events"]}
+{"tool":"search_hytale_docs","query":"custom item interaction add recipe","expectedIds":["item-interaction"]}
+{"tool":"search_hytale_docs","query":"inventory management custom containers","expectedIds":["inventory-management"]}
+{"tool":"search_hytale_docs","query":"customizing hotbar actions packet interception","expectedIds":["customizing-hotbar-actions"]}
+{"tool":"search_hytale_docs","query":"client to server inventory packets reference","expectedIds":["client-inputs-reference"]}
+{"tool":"search_hytale_docs","query":"permission management for commands","expectedIds":["permission"]}
