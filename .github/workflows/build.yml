@@ -20,11 +20,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build
-        working-directory: hyve-plugin
+        working-directory: hyindex-plugin
         run: ./gradlew build
 
       - name: Shadow JARs
-        working-directory: hyve-plugin
+        working-directory: hyindex-plugin
         run: ./gradlew :indexer-cli:shadowJar :mcp-server:shadowJar
 
       - name: Upload artifacts
@@ -32,5 +32,5 @@ jobs:
         with:
           name: hyindex-jars
           path: |
-            hyve-plugin/indexer-cli/build/libs/hyve-knowledge-indexer.jar
-            hyve-plugin/mcp-server/build/libs/hyve-knowledge-mcp.jar
+            hyindex-plugin/indexer-cli/build/libs/hyindex-knowledge-indexer.jar
+            hyindex-plugin/mcp-server/build/libs/hyindex-knowledge-mcp.jar

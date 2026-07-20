@@ -20,14 +20,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build shadow JARs
-        working-directory: hyve-plugin
+        working-directory: hyindex-plugin
         run: ./gradlew :indexer-cli:shadowJar :mcp-server:shadowJar :embeddings-local:shadowJar
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            hyve-plugin/indexer-cli/build/libs/hyve-knowledge-indexer.jar
-            hyve-plugin/mcp-server/build/libs/hyve-knowledge-mcp.jar
-            hyve-plugin/embeddings-local/build/libs/hyve-embeddings-local.jar
+            hyindex-plugin/indexer-cli/build/libs/hyindex-knowledge-indexer.jar
+            hyindex-plugin/mcp-server/build/libs/hyindex-knowledge-mcp.jar
+            hyindex-plugin/embeddings-local/build/libs/hyindex-embeddings-local.jar
           generate_release_notes: true

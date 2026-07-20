@@ -6,25 +6,25 @@ Public fork of the discontinued [Hyve IntelliJ plugin](https://plugins.jetbrains
 
 ## Quick Start
 
-1. Download `hyve-knowledge-indexer.jar` and `hyve-knowledge-mcp.jar` from the [latest release](https://github.com/Xytronix/Hyindex/releases/latest).
+1. Download `hyindex-knowledge-indexer.jar` and `hyindex-knowledge-mcp.jar` from the [latest release](https://github.com/Xytronix/Hyindex/releases/latest).
 2. Run interactive setup:
 
 ```bash
-java -jar hyve-knowledge-indexer.jar init
+java -jar hyindex-knowledge-indexer.jar init
 ```
 
 3. Index and serve:
 
 ```bash
-java -jar hyve-knowledge-indexer.jar --patchline release
-java -jar hyve-knowledge-mcp.jar
+java -jar hyindex-knowledge-indexer.jar --patchline release
+java -jar hyindex-knowledge-mcp.jar
 ```
 
 Non-interactive examples:
 
 ```bash
 # OpenAI
-java -jar hyve-knowledge-indexer.jar init --non-interactive \
+java -jar hyindex-knowledge-indexer.jar init --non-interactive \
   --provider openai \
   --embedding-url https://api.openai.com \
   --api-key sk-... \
@@ -34,7 +34,7 @@ java -jar hyve-knowledge-indexer.jar init --non-interactive \
   --force
 
 # Voyage (direct API or any Voyage-protocol endpoint)
-java -jar hyve-knowledge-indexer.jar init --non-interactive \
+java -jar hyindex-knowledge-indexer.jar init --non-interactive \
   --provider voyage \
   --embedding-url https://api.voyageai.com \
   --api-key pa-... \
@@ -43,7 +43,7 @@ java -jar hyve-knowledge-indexer.jar init --non-interactive \
   --force
 
 # OpenAI-compatible custom endpoint
-java -jar hyve-knowledge-indexer.jar init --non-interactive \
+java -jar hyindex-knowledge-indexer.jar init --non-interactive \
   --provider openai \
   --embedding-url http://localhost:8000 \
   --code-model Qwen/Qwen3-Embedding-8B \
@@ -56,10 +56,10 @@ java -jar hyve-knowledge-indexer.jar init --non-interactive \
 All runtime settings live in one file:
 
 ```text
-~/.hyve/knowledge/mcp-config.json
+~/.hyindex/knowledge/mcp-config.json
 ```
 
-Created by `init`. Indexes live under `~/.hyve/knowledge/versions/{slug}/`.
+Created by `init`. Indexes live under `~/.hyindex/knowledge/versions/{slug}/`.
 
 After you edit the config re-run the indexer and restart the MCP server:
 
@@ -80,10 +80,10 @@ After you edit the config re-run the indexer and restart the MCP server:
 Or re-run setup and overwrite:
 
 ```bash
-java -jar hyve-knowledge-indexer.jar init --force
+java -jar hyindex-knowledge-indexer.jar init --force
 ```
 
-Optional env overrides: `HYVE_EMBEDDING_PROVIDER`, `HYVE_EMBEDDING_BASE_URL`, `HYVE_EMBEDDING_API_KEY`, `HYVE_EMBEDDING_CODE_MODEL`, `HYVE_EMBEDDING_TEXT_MODEL`, `HYVE_EMBEDDING_DIMENSIONS`, `HYVE_ACTIVE_VERSION`, `HYVE_INDEX_PATH`.
+Optional env overrides: `HYINDEX_EMBEDDING_PROVIDER`, `HYINDEX_EMBEDDING_BASE_URL`, `HYINDEX_EMBEDDING_API_KEY`, `HYINDEX_EMBEDDING_CODE_MODEL`, `HYINDEX_EMBEDDING_TEXT_MODEL`, `HYINDEX_EMBEDDING_DIMENSIONS`, `HYINDEX_ACTIVE_VERSION`, `HYINDEX_INDEX_PATH`.
 
 ## Embedding models
 
@@ -118,13 +118,13 @@ Notes:
 - Local ONNX is **not** bundled and can be included with the following command:
 
 ```bash
-java -cp hyve-knowledge-indexer.jar:hyve-embeddings-local.jar \
-  com.hyve.knowledge.cli.IndexerMainKt --patchline release
+java -cp hyindex-knowledge-indexer.jar:hyindex-embeddings-local.jar \
+  com.hyindex.knowledge.cli.IndexerMainKt --patchline release
 ```
 
 ## MCP Config
 
-Example (`~/.hyve/knowledge/mcp-config.json`):
+Example (`~/.hyindex/knowledge/mcp-config.json`):
 
 ```json
 {
@@ -153,7 +153,7 @@ Wire the MCP server into a client (stdio):
   "mcpServers": {
     "hyindex": {
       "command": "java",
-      "args": ["-jar", "/path/to/hyve-knowledge-mcp.jar"]
+      "args": ["-jar", "/path/to/hyindex-knowledge-mcp.jar"]
     }
   }
 }
@@ -164,14 +164,14 @@ Wire the MCP server into a client (stdio):
 Requires JDK 21+.
 
 ```bash
-cd hyve-plugin
+cd hyindex-plugin
 ./gradlew :indexer-cli:shadowJar :mcp-server:shadowJar
 ```
 
 Outputs:
 
-- `indexer-cli/build/libs/hyve-knowledge-indexer.jar`
-- `mcp-server/build/libs/hyve-knowledge-mcp.jar`
+- `indexer-cli/build/libs/hyindex-knowledge-indexer.jar`
+- `mcp-server/build/libs/hyindex-knowledge-mcp.jar`
 
 Optional in-process ONNX embeddings:
 
