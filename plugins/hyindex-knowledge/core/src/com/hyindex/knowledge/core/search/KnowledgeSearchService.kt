@@ -336,8 +336,9 @@ class KnowledgeSearchService(
                 if (result.nodeId !in best) best[result.nodeId] = result
             }
         }
+        val norm = scores.values.maxOrNull()?.takeIf { it > 0.0 } ?: 1.0
         return best.values
-            .map { it.copy(score = scores[it.nodeId] ?: 0.0) }
+            .map { it.copy(score = (scores[it.nodeId] ?: 0.0) / norm) }
             .sortedByDescending { it.score }
     }
 

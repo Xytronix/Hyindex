@@ -538,14 +538,15 @@ class KnowledgeSearchServiceTest {
     }
 
     @Test
-    fun `rrfFuse scores by reciprocal rank and orders descending`() {
+    fun `rrfFuse normalizes fused scores to a 0 to 1 scale and orders descending`() {
         val a = listOf(result("node:B", 0.0), result("node:A", 0.0), result("node:C", 0.0))
         val b = listOf(result("node:B", 0.0), result("node:A", 0.0))
         val fused = service.rrfFuse(listOf(a, b), 60)
         assertEquals(3, fused.size)
         assertEquals("node:B", fused[0].nodeId)
-        val expectedB = 1.0 / 61 + 1.0 / 61
-        assertEquals(expectedB, fused[0].score, 1e-9)
+        assertEquals(1.0, fused[0].score, 1e-9)
+        assertTrue(fused.all { it.score in 0.0..1.0 }, "fused scores must be normalized to [0,1]")
+        assertTrue(fused[0].score >= fused[1].score && fused[1].score >= fused[2].score, "descending order")
     }
 
     @Test
