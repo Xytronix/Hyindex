@@ -282,6 +282,7 @@ class GameDataIndexer(private val ctx: IndexContext) {
         """)
 
         val stemLookup = buildStemLookup(db)
+        val roleLookup = buildRoleLookup(db)
         val allEdges = mutableListOf<EdgeRow>()
 
         val manifestNames = chunks.asSequence()
@@ -297,7 +298,7 @@ class GameDataIndexer(private val ctx: IndexContext) {
                 GameDataType.DROP -> allEdges += extractDropEdges(chunk, json, stemLookup)
                 GameDataType.NPC -> allEdges += extractNpcEdges(chunk, json, stemLookup)
                 GameDataType.SHOP -> allEdges += extractShopEdges(chunk, json, stemLookup)
-                GameDataType.NPC_GROUP -> allEdges += extractGroupEdges(chunk, json, stemLookup)
+                GameDataType.NPC_GROUP -> allEdges += extractGroupEdges(chunk, json, stemLookup, roleLookup)
                 GameDataType.OBJECTIVE -> allEdges += extractObjectiveEdges(chunk, json, stemLookup)
                 GameDataType.ENTITY -> allEdges += extractEntityEdges(chunk, json, stemLookup)
                 GameDataType.BLOCK -> allEdges += extractBlockEdges(chunk, json, stemLookup)
@@ -337,6 +338,13 @@ class GameDataIndexer(private val ctx: IndexContext) {
     private fun buildStemLookup(db: KnowledgeDatabase): Map<String, List<String>> {
         return db.query(
             "SELECT id, display_name FROM nodes WHERE corpus = 'gamedata'"
+        ) { rs -> rs.getString("display_name").lowercase() to rs.getString("id") }
+            .groupBy({ it.first }, { it.second })
+    }
+
+    private fun buildRoleLookup(db: KnowledgeDatabase): Map<String, List<String>> {
+        return db.query(
+            "SELECT id, display_name FROM nodes WHERE corpus = 'gamedata' AND data_type = 'npc'"
         ) { rs -> rs.getString("display_name").lowercase() to rs.getString("id") }
             .groupBy({ it.first }, { it.second })
     }
@@ -603,7 +611,7 @@ class GameDataIndexer(private val ctx: IndexContext) {
     }
 
     internal fun extractGroupEdges(
-        chunk: GameDataChunk, obj: JsonObject, stemLookup: Map<String, List<String>>,
+        chunk: GameDataChunk, obj: JsonObject, stemLookup: Map<String, List<String>>, roleLookup: Map<String, List<String>> = emptyMap(),
     ): List<EdgeRow> {
         val edges = mutableListOf<EdgeRow>()
         val npcIds = mutableListOf<String>()
@@ -640,7 +648,26 @@ class GameDataIndexer(private val ctx: IndexContext) {
             }
         }
 
+        val includeGlobs = readGlobs(obj, "IncludeRoles", "includeRoles")
+        if (includeGlobs.isNotEmpty()) {
+            val excludeGlobs = readGlobs(obj, "ExcludeRoles", "excludeRoles")
+            for (roleId in matchGroupRoles(includeGlobs, excludeGlobs, roleLookup)) {
+                if (roleId == chunk.id) continue
+                edges += EdgeRow(chunk.id, roleId, "HAS_MEMBER")
+                edges += EdgeRow(roleId, chunk.id, "BELONGS_TO_GROUP")
+            }
+        }
+
         return edges
+    }
+
+    private fun readGlobs(obj: JsonObject, vararg keys: String): List<String> {
+        for (key in keys) {
+            val arr = obj[key]?.jsonArrayOrNull() ?: continue
+            val globs = arr.mapNotNull { (it as? JsonPrimitive)?.content?.takeIf { s -> s.isNotBlank() } }
+            if (globs.isNotEmpty()) return globs
+        }
+        return emptyList()
     }
 
     private fun extractBenchRequirementEdges(chunk: GameDataChunk, source: JsonObject, edges: MutableList<EdgeRow>) {
@@ -911,4 +938,22 @@ class GameDataIndexer(private val ctx: IndexContext) {
     private fun JsonElement.jsonObjectOrNull(): JsonObject? = this as? JsonObject
 
     private fun JsonElement.jsonArrayOrNull(): JsonArray? = this as? JsonArray
+}
+
+internal fun globToRegex(glob: String): Regex =
+    Regex(glob.split('*').joinToString(".*") { Regex.escape(it) }, RegexOption.IGNORE_CASE)
+
+internal fun matchGroupRoles(
+    includeGlobs: List<String>,
+    excludeGlobs: List<String>,
+    roleLookup: Map<String, List<String>>,
+): Set<String> {
+    if (includeGlobs.isEmpty()) return emptySet()
+    val include = includeGlobs.map { globToRegex(it) }
+    val exclude = excludeGlobs.map { globToRegex(it) }
+    val matched = LinkedHashSet<String>()
+    for ((name, ids) in roleLookup) {
+        if (include.any { it.matches(name) } && exclude.none { it.matches(name) }) matched += ids
+    }
+    return matched
 }
