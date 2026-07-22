@@ -820,6 +820,35 @@ class HytaleKnowledgeServerTest {
     }
 
     @Test
+    fun `graph tools accept id and nodeId interchangeably`() = runBlocking {
+        val tempFile = Files.createTempFile("node_altparam_", ".db").toFile()
+        tempFile.deleteOnExit()
+        val ndb = KnowledgeDatabase.forFile(tempFile)
+        ndb.execute(
+            "INSERT INTO nodes (id, node_type, display_name, corpus, content) VALUES (?, 'JavaMethod', ?, 'code', ?)",
+            "com.x.Store#foo", "Store#foo", "public void foo() {}",
+        )
+        val svc = KnowledgeSearchService(ndb, CorpusIndexManager(KnowledgeConfig()))
+        val srv = HytaleKnowledgeServer(mapOf("release" to svc), mapOf("release" to ndb))
+        val nodeResult = srv.createServer().tools["get_hytale_node"]!!.handler(
+            callToolRequest("get_hytale_node", buildJsonObject { put("nodeId", "com.x.Store#foo") })
+        )
+        assertNull(nodeResult.isError)
+        val nodeText = (nodeResult.content.first() as io.modelcontextprotocol.kotlin.sdk.types.TextContent).text
+        assertEquals("com.x.Store#foo", json.parseToJsonElement(nodeText).jsonObject["node"]!!.jsonObject["id"]?.jsonPrimitive?.content)
+        ndb.close()
+
+        val (rdb, rsrv) = recipeServer()
+        val recipeResult = rsrv.createServer().tools["get_hytale_recipe"]!!.handler(
+            callToolRequest("get_hytale_recipe", buildJsonObject { put("id", "gamedata:recipe:torch_recipe"); put("direction", "requires") })
+        )
+        assertNull(recipeResult.isError)
+        val recipeText = (recipeResult.content.first() as io.modelcontextprotocol.kotlin.sdk.types.TextContent).text
+        assertTrue(recipeText.contains("gamedata:item:wood_log"), "recipe with 'id' fallback should resolve; got: $recipeText")
+        rdb.close()
+    }
+
+    @Test
     fun `get_hytale_node returns candidates for an ambiguous display_name`() = runBlocking {
         val tempFile = Files.createTempFile("node_ambig_", ".db").toFile()
         tempFile.deleteOnExit()

@@ -778,7 +778,7 @@ class HytaleKnowledgeServer(
             ),
         )
         return RegisteredTool(tool) { request ->
-            val id = request.arguments?.getString("id") ?: return@RegisteredTool errorResult("Missing 'id' parameter")
+            val id = request.arguments?.getString("id") ?: request.arguments?.getString("nodeId") ?: return@RegisteredTool errorResult("Missing 'id' parameter")
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
             val searchService = serviceForPatchline(patchline, warning) ?: return@RegisteredTool errorResult("No knowledge index loaded.")
@@ -902,7 +902,7 @@ class HytaleKnowledgeServer(
             ),
         )
         return RegisteredTool(tool) { request ->
-            val id = request.arguments?.getString("id") ?: return@RegisteredTool errorResult("Missing 'id' parameter")
+            val id = request.arguments?.getString("id") ?: request.arguments?.getString("nodeId") ?: return@RegisteredTool errorResult("Missing 'id' parameter")
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val depth = (request.arguments?.getInt("depth") ?: 1).coerceIn(1, 3)
             val limit = (request.arguments?.getInt("limit") ?: 25).coerceIn(1, 200)
@@ -1051,7 +1051,7 @@ class HytaleKnowledgeServer(
             ),
         )
         return RegisteredTool(tool) { request ->
-            val nodeId = request.arguments?.getString("nodeId") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
+            val nodeId = request.arguments?.getString("nodeId") ?: request.arguments?.getString("id") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
             val limit = (request.arguments?.getInt("limit") ?: 10).coerceIn(1, 50)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val direction = request.arguments?.getString("direction") ?: "both"
@@ -1081,7 +1081,7 @@ class HytaleKnowledgeServer(
             ),
         )
         return RegisteredTool(tool) { request ->
-            val nodeId = request.arguments?.getString("nodeId") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
+            val nodeId = request.arguments?.getString("nodeId") ?: request.arguments?.getString("id") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
             val limit = (request.arguments?.getInt("limit") ?: 10).coerceIn(1, 50)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
@@ -1105,7 +1105,7 @@ class HytaleKnowledgeServer(
             ),
         )
         return RegisteredTool(tool) { request ->
-            val nodeId = request.arguments?.getString("nodeId") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
+            val nodeId = request.arguments?.getString("nodeId") ?: request.arguments?.getString("id") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
             val limit = (request.arguments?.getInt("limit") ?: 10).coerceIn(1, 50)
             val verbosity = parseVerbosity(request.arguments?.getString("verbosity"))
             val patchline = request.arguments?.getString("patchline") ?: "release"
@@ -1129,7 +1129,7 @@ class HytaleKnowledgeServer(
             ),
         )
         return RegisteredTool(tool) { request ->
-            val nodeId = request.arguments?.getString("nodeId") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
+            val nodeId = request.arguments?.getString("nodeId") ?: request.arguments?.getString("id") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
             val limit = (request.arguments?.getInt("limit") ?: 5).coerceIn(1, 50)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
@@ -1159,7 +1159,7 @@ class HytaleKnowledgeServer(
             ),
         )
         return RegisteredTool(tool) { request ->
-            val id = request.arguments?.getString("id") ?: return@RegisteredTool errorResult("Missing 'id' parameter")
+            val id = request.arguments?.getString("id") ?: request.arguments?.getString("nodeId") ?: return@RegisteredTool errorResult("Missing 'id' parameter")
             val limit = (request.arguments?.getInt("limit") ?: 10).coerceIn(1, 50)
             val direction = request.arguments?.getString("direction") ?: "callers"
             val patchline = request.arguments?.getString("patchline") ?: "release"
@@ -1197,7 +1197,7 @@ class HytaleKnowledgeServer(
             ),
         )
         return RegisteredTool(tool) { request ->
-            val nodeId = request.arguments?.getString("nodeId") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
+            val nodeId = request.arguments?.getString("nodeId") ?: request.arguments?.getString("id") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
             val limit = (request.arguments?.getInt("limit") ?: 10).coerceIn(1, 50)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
@@ -1220,7 +1220,7 @@ class HytaleKnowledgeServer(
             ),
         )
         return RegisteredTool(tool) { request ->
-            val nodeId = request.arguments?.getString("nodeId") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
+            val nodeId = request.arguments?.getString("nodeId") ?: request.arguments?.getString("id") ?: return@RegisteredTool errorResult("Missing 'nodeId' parameter")
             val limit = (request.arguments?.getInt("limit") ?: 10).coerceIn(1, 50)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
