@@ -382,7 +382,7 @@ class HytaleKnowledgeServer(
                     } catch (e: Exception) {
                         emptyList()
                     }
-                }.sortedByDescending { it.score }.take(perCorpus)
+                }.sortedByDescending { it.score }.distinctBy { it.nodeId }.take(perCorpus)
                 successResult(encodeSearchResults(query, merged, warning.toString(), verbosity))
             } catch (e: Exception) {
                 errorResult("Search failed: ${e.message}")

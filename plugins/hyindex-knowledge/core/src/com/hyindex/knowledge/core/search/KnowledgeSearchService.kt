@@ -54,6 +54,7 @@ class KnowledgeSearchService(
 
 
     fun search(query: String, limit: Int = 10): List<SearchResult> {
+        if (query.isBlank()) return emptyList()
         val router = QueryRouter(db)
         val routeResult = router.route(query)
 
@@ -239,6 +240,7 @@ class KnowledgeSearchService(
         snippetContains: String? = null,
         sort: String? = null,
     ): List<SearchResult> {
+        if (query.isBlank()) return emptyList()
         if (corpus == Corpus.CODE) return searchCode(query, dataTypeFilters?.firstOrNull(), limit, rerank)
 
         val hnsw = indexManager.getIndex(corpus) ?: return emptyList()

@@ -7,7 +7,7 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
 
     fun findByRelation(entityName: String, relation: String, limit: Int = 10): List<SearchResult> {
         val targetResults = db.query(
-            """SELECT n.id, n.display_name, n.content, n.file_path, n.line_start
+            """SELECT n.id, n.display_name, n.content, n.file_path, n.line_start, n.corpus, n.data_type
                FROM edges e
                JOIN nodes n ON n.id = e.source_id
                WHERE e.edge_type = ?
@@ -26,13 +26,15 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 lineStart = rs.getInt("line_start"),
                 score = 1.0,
                 source = ResultSource.GRAPH,
+                dataType = rs.getString("data_type"),
+                corpus = rs.getString("corpus") ?: "code",
             )
         }
 
         if (targetResults.isNotEmpty()) return targetResults
 
         return db.query(
-            """SELECT n.id, n.display_name, n.content, n.file_path, n.line_start
+            """SELECT n.id, n.display_name, n.content, n.file_path, n.line_start, n.corpus, n.data_type
                FROM edges e
                JOIN nodes n ON n.id = e.target_id
                WHERE e.edge_type = ?
@@ -51,6 +53,8 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 lineStart = rs.getInt("line_start"),
                 score = 0.9,
                 source = ResultSource.GRAPH,
+                dataType = rs.getString("data_type"),
+                corpus = rs.getString("corpus") ?: "code",
             )
         }
     }
@@ -172,7 +176,7 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
 
     fun findByName(entityName: String, limit: Int = 10): List<SearchResult> {
         return db.query(
-            """SELECT id, display_name, content, file_path, line_start
+            """SELECT id, display_name, content, file_path, line_start, corpus, data_type
                FROM nodes
                WHERE display_name = ? OR display_name LIKE ? OR display_name LIKE ?
                ORDER BY
@@ -196,6 +200,8 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 lineStart = rs.getInt("line_start"),
                 score = 1.0,
                 source = ResultSource.GRAPH,
+                dataType = rs.getString("data_type"),
+                corpus = rs.getString("corpus") ?: "code",
             )
         }
     }

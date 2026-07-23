@@ -408,6 +408,30 @@ class KnowledgeSearchServiceTest {
         assertTrue(adjusted.first { it.nodeId == "gamedata:cave_deep_01" }.score < cave.score)
     }
 
+    @Test
+    fun `blank query returns empty without hitting the embedding provider`() {
+        assertTrue(service.search("").isEmpty())
+        assertTrue(service.search("   ").isEmpty())
+        assertTrue(service.searchCorpus("", com.hyindex.knowledge.core.db.Corpus.GAMEDATA).isEmpty())
+        assertTrue(service.searchCorpus("  ", com.hyindex.knowledge.core.db.Corpus.DOCS).isEmpty())
+    }
+
+    @Test
+    fun `findByName preserves the node's real corpus`() {
+        val tempFile = Files.createTempFile("graph_corpus_", ".db").toFile()
+        tempFile.deleteOnExit()
+        val db = KnowledgeDatabase.forFile(tempFile)
+        db.execute(
+            "INSERT INTO nodes (id, node_type, display_name, corpus, data_type, content) VALUES (?, 'GameData', ?, 'gamedata', 'npc', ?)",
+            "gamedata:Server:NPC:Kweebec.json", "Kweebec", "npc kweebec",
+        )
+        val hits = GraphTraversal(db).findByName("Kweebec")
+        assertEquals(1, hits.size)
+        assertEquals("gamedata", hits.first().corpus)
+        assertEquals("npc", hits.first().dataType)
+        db.close()
+    }
+
     private class FakeReranker(private val order: List<Pair<Int, Double>>) : Reranker {
         var called = false
         override fun rerank(query: String, documents: List<String>): List<Pair<Int, Double>> {
