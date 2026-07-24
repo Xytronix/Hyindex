@@ -68,6 +68,16 @@ private fun readRecordedTree(versionDir: java.io.File): String? {
     return Regex("\"treeRevision\"\\s*:\\s*\"([^\"]+)\"").find(meta.readText())?.groupValues?.get(1)
 }
 
+private fun seedFromPrevious(fromDir: java.io.File, toDir: java.io.File, log: com.hyindex.knowledge.core.logging.LogProvider) {
+    for (name in listOf("knowledge.db", "knowledge.db-wal", "knowledge.db-shm")) {
+        val src = java.io.File(fromDir, name)
+        if (src.exists()) src.copyTo(java.io.File(toDir, name), overwrite = true)
+    }
+    val hnsw = java.io.File(fromDir, "hnsw")
+    if (hnsw.isDirectory) hnsw.copyRecursively(java.io.File(toDir, "hnsw"), overwrite = true)
+    log.info("Seeded ${toDir.name} from ${fromDir.name} for incremental indexing")
+}
+
 
 private fun snapshotVersionIndex(versionDir: java.io.File, version: String, log: com.hyindex.knowledge.core.logging.LogProvider) {
     val dbFile = java.io.File(versionDir, "knowledge.db")
@@ -168,21 +178,24 @@ fun main(args: Array<String>) {
         val cfg = baseConfig.copy(activeVersion = slug)
         val versionDir = cfg.resolvedIndexPath()
 
-        if (!opts.force) {
-            val latestSlug = VersionResolver.latestSlug(baseDir, patchline)
-            if (latestSlug != null) {
-                val latestDir = baseConfig.copy(activeVersion = latestSlug).resolvedIndexPath()
-                if (File(latestDir, "knowledge.db").exists() && readRecordedTree(latestDir) == versionInfo.treeRevision) {
-                    log.info("Patchline $patchline: content unchanged since $latestSlug (tree ${versionInfo.treeRevision.take(12)}) — skipping")
-                    continue
-                }
-            }
+        val priorDir = if (!opts.force) {
+            VersionResolver.latestSlug(baseDir, patchline)
+                ?.let { baseConfig.copy(activeVersion = it).resolvedIndexPath() }
+                ?.takeIf { File(it, "knowledge.db").exists() }
+        } else null
+
+        if (priorDir != null && readRecordedTree(priorDir) == versionInfo.treeRevision) {
+            log.info("Patchline $patchline: content unchanged since ${priorDir.name} (tree ${versionInfo.treeRevision.take(12)}) — skipping")
+            continue
         }
         if (opts.force && versionDir.exists()) {
             log.info("Patchline $patchline: --force; wiping $slug")
             wipeVersionIndex(versionDir)
         }
         versionDir.mkdirs()
+        if (priorDir != null && priorDir != versionDir && !File(versionDir, "knowledge.db").exists()) {
+            seedFromPrevious(priorDir, versionDir, log)
+        }
 
         println("=== Indexing $slug ===")
 

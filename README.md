@@ -51,6 +51,14 @@ java -jar hyindex-knowledge-indexer.jar init --non-interactive \
   --force
 ```
 
+## Incremental indexing
+
+Re-running the indexer only re-processes files whose content changed (keyed off the git tree hash). Use `--force` for a full rebuild:
+
+```bash
+java -jar hyindex-knowledge-indexer.jar --patchline release --force
+```
+
 ## Changing config and PAT
 
 All runtime settings live in one file:

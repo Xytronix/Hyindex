@@ -31,8 +31,6 @@ class CodeIndexer(private val ctx: IndexContext) {
             corpusType = "java",
             fileFilter = { it.startsWith("com/hypixel/hytale/") },
         )
-
-
         val changes = if (force) {
             FileHashTracker.ChangeSet(
                 added = emptySet(),
@@ -49,52 +47,7 @@ class CodeIndexer(private val ctx: IndexContext) {
         }
         if (ctx.progress.isCanceled) return IndexResult("code", 0, false, "canceled")
 
-        ctx.progress.status("Parsing decompiled Java files..."); ctx.progress.fraction(0.05)
-        val allChunks = JavaChunker.chunkDirectory(
-            dir = decompileDir,
-            pathFilter = { it.startsWith("com/hypixel/hytale/") },
-            onProgress = { _, idx, total ->
-                ctx.progress.fraction(0.05 + (0.1 * idx / total.coerceAtLeast(1)))
-            },
-        )
-        ctx.log.info("Parsed ${allChunks.size} method chunks from ${decompileDir.name}")
-        if (ctx.progress.isCanceled) return IndexResult("code", 0, false, "canceled")
-
-
-        val chunksToEmbed = allChunks
-
-        val embeddings: List<FloatArray>
-        if (chunksToEmbed.isEmpty()) {
-            embeddings = emptyList()
-        } else {
-            ctx.progress.status("Embedding ${chunksToEmbed.size} chunks..."); ctx.progress.fraction(0.15)
-            val provider = EmbeddingProvider.fromConfig(ctx.config, EmbeddingPurpose.CODE)
-            runBlocking { provider.validate() }
-            val texts = chunksToEmbed.map { it.embeddingText }
-            val cacheService = ctx.cache
-            val cacheResult = cacheService.lookup(texts, provider.modelId)
-            val uncachedTexts = cacheResult.uncachedIndices.map { texts[it] }
-            val newEmbeddings: List<FloatArray> = if (uncachedTexts.isEmpty()) emptyList() else {
-                val embedded = runBlocking {
-                    provider.embedBatched(
-                        uncachedTexts,
-                        batchSize = 32,
-                        onBatchComplete = { done, total ->
-                            ctx.progress.fraction(0.15 + (0.55 * done / total.coerceAtLeast(1)))
-                        },
-                    )
-                }
-                cacheService.store(uncachedTexts, embedded, provider.modelId)
-                embedded
-            }
-            val merged = arrayOfNulls<FloatArray>(texts.size)
-            for ((idx, vec) in cacheResult.cached) { merged[idx] = vec }
-            for ((i, origIdx) in cacheResult.uncachedIndices.withIndex()) { merged[origIdx] = newEmbeddings[i] }
-            embeddings = merged.map { it!! }
-        }
-        if (ctx.progress.isCanceled) return IndexResult("code", 0, false, "canceled")
-
-        ctx.progress.status("Writing index..."); ctx.progress.fraction(0.7)
+        // Remove stale files' nodes + edges before re-indexing only the delta.
         val stalePaths = changes.changed + changes.deleted
         if (stalePaths.isNotEmpty()) {
             hashTracker.removeHashes(stalePaths)
@@ -109,59 +62,100 @@ class CodeIndexer(private val ctx: IndexContext) {
                 ps.executeBatch()
             }
         }
-        if (chunksToEmbed.isNotEmpty()) {
+
+        // Parse only added + changed files.
+        val deltaFiles = changes.added + changes.changed
+        ctx.progress.status("Parsing ${deltaFiles.size} changed Java file(s)..."); ctx.progress.fraction(0.05)
+        val deltaChunks = if (deltaFiles.isEmpty()) emptyList() else JavaChunker.chunkDirectory(
+            dir = decompileDir,
+            pathFilter = { it in deltaFiles },
+            onProgress = { _, idx, total -> ctx.progress.fraction(0.05 + (0.1 * idx / total.coerceAtLeast(1))) },
+        )
+        ctx.log.info("Parsed ${deltaChunks.size} method chunks from ${deltaFiles.size} changed file(s)")
+        if (ctx.progress.isCanceled) return IndexResult("code", 0, false, "canceled")
+
+        if (deltaChunks.isNotEmpty()) {
             db.inTransaction { conn ->
                 val ps = conn.prepareStatement(
                     """INSERT OR REPLACE INTO nodes
                        (id, node_type, display_name, file_path, line_start, line_end, content, embedding_text, chunk_index, owning_file, corpus, data_type, metadata)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'code', NULL, ?)"""
                 )
-                for ((idx, chunk) in chunksToEmbed.withIndex()) {
+                for (chunk in deltaChunks) {
                     val simpleClass = chunk.className.substringAfterLast('.')
                     val displayName = if (chunk.methodName.isBlank()) simpleClass else "$simpleClass#${chunk.methodName}"
                     ps.setString(1, chunk.id); ps.setString(2, chunk.nodeType)
                     ps.setString(3, displayName)
                     ps.setString(4, chunk.filePath); ps.setInt(5, chunk.lineStart); ps.setInt(6, chunk.lineEnd)
-                    ps.setString(7, chunk.content); ps.setString(8, chunk.embeddingText); ps.setInt(9, idx)
+                    ps.setString(7, chunk.content); ps.setString(8, chunk.embeddingText); ps.setInt(9, 0)
                     val relPath = File(chunk.filePath).relativeTo(decompileDir).path.replace('\\', '/')
                     ps.setString(10, relPath); ps.setString(11, facetMetadataJson(chunk)); ps.addBatch()
-
-
-                    if ((idx + 1) % 2000 == 0) ps.executeBatch()
                 }
                 ps.executeBatch()
             }
-            val ftsRows = chunksToEmbed.map { chunk ->
-                val simpleClass = chunk.className.substringAfterLast('.')
-                val displayName = if (chunk.methodName.isBlank()) simpleClass else "$simpleClass#${chunk.methodName}"
-                FtsTokenizer.FtsRow(chunk.id, displayName, chunk.content)
-            }
-            FtsTokenizer.populate(db, "code", ftsRows, splitBody = true)
+            ctx.progress.status("Extracting graph structure..."); ctx.progress.fraction(0.2)
+            JavaExtractor.extractAndStore(deltaChunks, db, decompileDir, ctx.log)
         }
+
+        // Rebuild the vector index, FTS and chunk ordinals from the full current corpus.
+        val provider = EmbeddingProvider.fromConfig(ctx.config, EmbeddingPurpose.CODE)
+        runBlocking { provider.validate() }
+        indexedCount = rebuildCodeIndex(provider)
+
         if (changes.currentHashes.isNotEmpty()) hashTracker.updateHashes(changes.currentHashes)
-
-        ctx.progress.status("Building vector index..."); ctx.progress.fraction(0.8)
-        if (embeddings.isNotEmpty()) {
-            val hnsw = HnswIndex(embeddings.first().size)
-            hnsw.build(embeddings)
-            hnsw.save(Paths.get(indexDir.absolutePath, "hnsw", "code.hnsw"))
-            hnsw.close()
-            indexedCount = embeddings.size
-        }
-
-        ctx.progress.status("Extracting graph structure..."); ctx.progress.fraction(0.9)
-        JavaExtractor.extractAndStore(allChunks, db, decompileDir, ctx.log)
         ctx.progress.fraction(1.0)
-        val fallbackCount = allChunks.count { it.nodeType == "JavaFile" }
-        if (fallbackCount > 0) {
-            ctx.log.info("Code index: $fallbackCount file(s) could not be parsed; indexed as file-level fallback nodes")
-        }
-        val typeOnlyCount = allChunks.count { it.nodeType == "JavaType" }
-        if (typeOnlyCount > 0) {
-            ctx.log.info("Code index: $typeOnlyCount type(s) had no methods; indexed as type-level nodes")
-        }
         ctx.log.info("Knowledge index built: $indexedCount methods indexed")
         return IndexResult("code", indexedCount, skipped = false, error = null)
+    }
+
+    // Rebuild HNSW + FTS + chunk_index from every current code node. Vectors for unchanged
+    // nodes come from the shared embedding cache; only genuinely new texts are embedded.
+    private class CodeRow(val id: String, val name: String, val body: String, val text: String)
+
+    private fun rebuildCodeIndex(provider: EmbeddingProvider): Int {
+        val db = ctx.db
+        val indexDir = ctx.indexDir
+        val rows = db.query(
+            "SELECT id, display_name, content, embedding_text FROM nodes WHERE corpus = 'code' AND embedding_text IS NOT NULL ORDER BY id"
+        ) { rs -> CodeRow(rs.getString("id"), rs.getString("display_name"), rs.getString("content") ?: "", rs.getString("embedding_text")) }
+
+        if (rows.isEmpty()) {
+            FtsTokenizer.populate(db, "code", emptyList(), splitBody = true)
+            return 0
+        }
+
+        val texts = rows.map { it.text }
+        val cacheResult = ctx.cache.lookup(texts, provider.modelId)
+        val uncachedTexts = cacheResult.uncachedIndices.map { texts[it] }
+        ctx.progress.status("Embedding ${uncachedTexts.size} new chunk(s) (${cacheResult.cached.size} cached)..."); ctx.progress.fraction(0.4)
+        val newEmbeddings = if (uncachedTexts.isEmpty()) emptyList() else {
+            val embedded = runBlocking {
+                provider.embedBatched(uncachedTexts, batchSize = 32, onBatchComplete = { done, total ->
+                    ctx.progress.fraction(0.4 + (0.3 * done / total.coerceAtLeast(1)))
+                })
+            }
+            ctx.cache.store(uncachedTexts, embedded, provider.modelId)
+            embedded
+        }
+        val vectors = arrayOfNulls<FloatArray>(texts.size)
+        for ((idx, vec) in cacheResult.cached) vectors[idx] = vec
+        for ((i, origIdx) in cacheResult.uncachedIndices.withIndex()) vectors[origIdx] = newEmbeddings[i]
+
+        // chunk_index must match the HNSW build order (row order) so ordinal->node lookup stays correct.
+        db.inTransaction { conn ->
+            val ps = conn.prepareStatement("UPDATE nodes SET chunk_index = ? WHERE id = ?")
+            for ((idx, row) in rows.withIndex()) { ps.setInt(1, idx); ps.setString(2, row.id); ps.addBatch() }
+            ps.executeBatch()
+        }
+
+        ctx.progress.status("Building vector index..."); ctx.progress.fraction(0.8)
+        val hnsw = HnswIndex(vectors.first()!!.size)
+        hnsw.build(vectors.map { it!! })
+        hnsw.save(Paths.get(indexDir.absolutePath, "hnsw", "code.hnsw"))
+        hnsw.close()
+
+        FtsTokenizer.populate(db, "code", rows.map { FtsTokenizer.FtsRow(it.id, it.name, it.body) }, splitBody = true)
+        return rows.size
     }
 
     private fun facetMetadataJson(chunk: com.hyindex.knowledge.extraction.MethodChunk): String? {
