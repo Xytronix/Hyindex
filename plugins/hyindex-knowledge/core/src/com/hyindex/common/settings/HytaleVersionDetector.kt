@@ -13,6 +13,7 @@ object HytaleVersionDetector {
         val buildNumber: Int = 0,
         val protocolCrc: Long = 0L,
         val branch: String = patchline,
+        val treeRevision: String = fullRevision,
     ) {
 
         val slug: String get() = "${patchline}_${rawVersion}"

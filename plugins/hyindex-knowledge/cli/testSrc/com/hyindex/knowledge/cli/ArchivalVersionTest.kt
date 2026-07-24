@@ -44,9 +44,14 @@ class ArchivalVersionTest {
         val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = slug)
         val versionDir = cfg.resolvedIndexPath()
 
-        val recordedRev = readRecordedRevision(versionDir)
-        if (!force && File(versionDir, "knowledge.db").exists() && recordedRev == versionInfo.fullRevision) {
-            return versionDir
+        if (!force) {
+            val latestSlug = VersionResolver.latestSlug(base, "release")
+            if (latestSlug != null) {
+                val latestDir = cfg.copy(activeVersion = latestSlug).resolvedIndexPath()
+                if (File(latestDir, "knowledge.db").exists() && readRecordedTree(latestDir) == versionInfo.treeRevision) {
+                    return latestDir
+                }
+            }
         }
         if (force && versionDir.exists()) wipeVersionIndex(versionDir)
         versionDir.mkdirs()
@@ -60,10 +65,10 @@ class ArchivalVersionTest {
         return versionDir
     }
 
-    private fun readRecordedRevision(versionDir: File): String? {
+    private fun readRecordedTree(versionDir: File): String? {
         val meta = File(versionDir, "version_meta.json")
         if (!meta.exists()) return null
-        return Regex("\"fullRevision\"\\s*:\\s*\"([^\"]+)\"").find(meta.readText())?.groupValues?.get(1)
+        return Regex("\"treeRevision\"\\s*:\\s*\"([^\"]+)\"").find(meta.readText())?.groupValues?.get(1)
     }
 
     private fun wipeVersionIndex(versionDir: File) {
@@ -133,6 +138,25 @@ class ArchivalVersionTest {
         val slug = VersionResolver.latestSlug(base, "release")
         assertThat(slug).isNotNull
         assertThat(slug).matches("""release_b100_\d{4}-\d{2}-\d{2}-\w+""")
+
+        listOf(origin, base).forEach { it.deleteRecursively() }
+    }
+
+    @Test
+    fun `new commit with unchanged tree reuses existing snapshot`() {
+        val origin = makeOrigin()
+        val base = Files.createTempDirectory("hyindex-arch-tree").toFile()
+
+        runIndex(base, origin)
+        val versionsDir = File(base, "versions")
+        val before = versionsDir.listFiles { f -> f.isDirectory }!!.map { it.name }.toSet()
+        assertThat(before).hasSize(1)
+
+        git(origin, "commit", "-q", "--allow-empty", "-m", "no-op")
+        runIndex(base, origin)
+
+        val after = versionsDir.listFiles { f -> f.isDirectory }!!.map { it.name }.toSet()
+        assertThat(after).isEqualTo(before)
 
         listOf(origin, base).forEach { it.deleteRecursively() }
     }

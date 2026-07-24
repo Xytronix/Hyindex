@@ -37,6 +37,8 @@ class GitSourceProviderRepoTest {
         assertThat(prepared.version.shortHash).isNotBlank()
         assertThat(prepared.version.buildNumber).isEqualTo(100)
         assertThat(prepared.version.protocolCrc).isEqualTo(1316766548L)
+        assertThat(prepared.version.treeRevision).hasSize(40)
+        assertThat(prepared.version.treeRevision).isNotEqualTo(prepared.version.fullRevision)
         assertThat(prepared.version.slug).matches("""release_b100_\d{4}-\d{2}-\d{2}-\w+""")
 
         listOf(origin, cacheBase).forEach { it.deleteRecursively() }

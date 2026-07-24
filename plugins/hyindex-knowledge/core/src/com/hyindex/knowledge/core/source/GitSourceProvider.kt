@@ -64,6 +64,7 @@ object GitSourceProvider {
 
     fun deriveVersion(worktree: File, patchline: String): HytaleVersionDetector.HytaleVersionInfo {
         val full = git(worktree, "rev-parse", "HEAD")
+        val tree = git(worktree, "rev-parse", "HEAD^{tree}")
         val short = git(worktree, "rev-parse", "--short", "HEAD")
         val isoDate = git(worktree, "log", "-1", "--format=%cd", "--date=format:%Y-%m-%d")
         val pv = File(worktree, "Protocol/protocol-version.json")
@@ -72,7 +73,7 @@ object GitSourceProvider {
         require(proto != null && proto.buildNumber >= 0) { "Protocol/protocol-version.json unparseable in $patchline" }
         val raw = "b${proto.buildNumber}_$isoDate-$short"
         val branch = PATCHLINE_BRANCH[patchline] ?: patchline
-        return HytaleVersionDetector.HytaleVersionInfo(patchline, isoDate, short, full, raw, proto.buildNumber, proto.crc, branch)
+        return HytaleVersionDetector.HytaleVersionInfo(patchline, isoDate, short, full, raw, proto.buildNumber, proto.crc, branch, tree)
     }
 
     fun prepare(patchline: String, cacheBase: File, log: LogProvider, repoUrl: String = DEFAULT_REPO_URL, token: String? = null): Prepared {

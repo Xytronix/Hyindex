@@ -62,10 +62,10 @@ private fun readRecordedVersion(versionDir: java.io.File): String? {
 }
 
 
-private fun readRecordedRevision(versionDir: java.io.File): String? {
+private fun readRecordedTree(versionDir: java.io.File): String? {
     val meta = java.io.File(versionDir, "version_meta.json")
     if (!meta.exists()) return null
-    return Regex("\"fullRevision\"\\s*:\\s*\"([^\"]+)\"").find(meta.readText())?.groupValues?.get(1)
+    return Regex("\"treeRevision\"\\s*:\\s*\"([^\"]+)\"").find(meta.readText())?.groupValues?.get(1)
 }
 
 
@@ -168,10 +168,15 @@ fun main(args: Array<String>) {
         val cfg = baseConfig.copy(activeVersion = slug)
         val versionDir = cfg.resolvedIndexPath()
 
-        val recordedRev = readRecordedRevision(versionDir)
-        if (!opts.force && File(versionDir, "knowledge.db").exists() && recordedRev == versionInfo.fullRevision) {
-            log.info("Patchline $patchline: slug $slug is up to date — skipping")
-            continue
+        if (!opts.force) {
+            val latestSlug = VersionResolver.latestSlug(baseDir, patchline)
+            if (latestSlug != null) {
+                val latestDir = baseConfig.copy(activeVersion = latestSlug).resolvedIndexPath()
+                if (File(latestDir, "knowledge.db").exists() && readRecordedTree(latestDir) == versionInfo.treeRevision) {
+                    log.info("Patchline $patchline: content unchanged since $latestSlug (tree ${versionInfo.treeRevision.take(12)}) — skipping")
+                    continue
+                }
+            }
         }
         if (opts.force && versionDir.exists()) {
             log.info("Patchline $patchline: --force; wiping $slug")
