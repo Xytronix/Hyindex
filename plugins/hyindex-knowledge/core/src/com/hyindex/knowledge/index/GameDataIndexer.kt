@@ -5,7 +5,9 @@ import com.hyindex.knowledge.core.db.Corpus
 import com.hyindex.knowledge.core.index.CorpusIndexManager
 import com.hyindex.knowledge.core.index.HnswIndex
 import com.hyindex.knowledge.core.db.KnowledgeDatabase
+import com.hyindex.knowledge.core.index.ContextualDocumentGroups
 import com.hyindex.knowledge.core.index.IndexContext
+import com.hyindex.knowledge.core.index.SourceChunk
 import com.hyindex.knowledge.core.index.IndexResult
 import com.hyindex.knowledge.core.embedding.embedBatched
 import com.hyindex.knowledge.core.extraction.GameDataChunk
@@ -14,15 +16,16 @@ import com.hyindex.knowledge.extraction.GameDataTextBuilder
 import com.hyindex.knowledge.extraction.ManifestParser
 import com.hyindex.knowledge.core.extraction.GameDataType
 import com.hyindex.knowledge.core.search.SystemClassMapping
+import com.hyindex.knowledge.core.source.CanonicalRoots
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
-
 
 class GameDataIndexer(private val ctx: IndexContext) {
     private var indexedCount = 0
     private var skipped = false
 
     fun index(): IndexResult {
+
         val db = ctx.db
         val hashTracker = FileHashTracker(db)
         val corpusManager = CorpusIndexManager(ctx.config)
@@ -81,13 +84,17 @@ class GameDataIndexer(private val ctx: IndexContext) {
                 lastProgress = frac
             }
         }
-        val parseResult = if (gameDataDir != null)
-            GameDataParser.parseAssetsTree(gameDataDir.toPath(), onProg)
-        else
-            GameDataParser.parseAssetsZip(ctx.assetsZip!!.toPath()) { current, total, file ->
-                if (ctx.progress.isCanceled) return@parseAssetsZip
-                onProg(current, total, file)
-            }
+        val parseResult = if (gameDataDir != null) {
+            GameDataParser.parseAssetsTree(gameDataDir.toPath(), onProgress = onProg)
+        } else {
+            GameDataParser.parseAssetsZip(
+                ctx.assetsZip!!.toPath(),
+                onProgress = { current, total, file ->
+                    if (ctx.progress.isCanceled) return@parseAssetsZip
+                    onProg(current, total, file)
+                },
+            )
+        }
 
         if (ctx.progress.isCanceled) return IndexResult("gamedata", 0, false, "canceled")
 
@@ -120,6 +127,7 @@ class GameDataIndexer(private val ctx: IndexContext) {
 
         val chunksToEmbed = allChunks
 
+
         if (ctx.progress.isCanceled) return IndexResult("gamedata", 0, false, "canceled")
 
 
@@ -131,30 +139,10 @@ class GameDataIndexer(private val ctx: IndexContext) {
             val provider = corpusManager.getProvider(Corpus.GAMEDATA)
             runBlocking { provider.validate() }
 
-            val texts = chunksToEmbed.map { it.textForEmbedding }
-            val cacheService = ctx.cache
-            val cacheResult = cacheService.lookup(texts, provider.modelId)
-
-            val uncachedTexts = cacheResult.uncachedIndices.map { texts[it] }
-            val newEmbeddings: List<FloatArray> = if (uncachedTexts.isEmpty()) emptyList() else {
-                val embedded = runBlocking {
-                    provider.embedBatched(
-                        uncachedTexts,
-                        batchSize = 32,
-                        onBatchComplete = { done, total ->
-                            ctx.progress.status("Batch $done/$total (${cacheResult.cached.size} cached)")
-                            ctx.progress.fraction(0.35 + (0.35 * done / total.coerceAtLeast(1)))
-                        },
-                    )
-                }
-                cacheService.store(uncachedTexts, embedded, provider.modelId)
-                embedded
+            val sourceChunks = chunksToEmbed.map {
+                SourceChunk(Corpus.GAMEDATA, it.textForEmbedding, filePath = it.filePath)
             }
-
-            val merged = arrayOfNulls<FloatArray>(texts.size)
-            for ((idx, vec) in cacheResult.cached) { merged[idx] = vec }
-            for ((i, origIdx) in cacheResult.uncachedIndices.withIndex()) { merged[origIdx] = newEmbeddings[i] }
-            embeddings = merged.map { it!! }
+            embeddings = ContextualDocumentGroups.embedInOrder(sourceChunks, provider, ctx.cache)
         } else {
             embeddings = emptyList()
         }
@@ -167,7 +155,7 @@ class GameDataIndexer(private val ctx: IndexContext) {
 
         val stalePaths = changes.changed + changes.deleted
         if (stalePaths.isNotEmpty()) {
-            hashTracker.removeHashes(stalePaths)
+            hashTracker.removeHashes(stalePaths, "gamedata")
             db.inTransaction { conn ->
                 val ps = conn.prepareStatement("DELETE FROM nodes WHERE owning_file = ? AND corpus = 'gamedata'")
                 for (path in stalePaths) {
@@ -247,8 +235,8 @@ class GameDataIndexer(private val ctx: IndexContext) {
     private fun parseManifests(): List<GameDataChunk> {
         val root = ctx.manifestRoot?.takeIf { it.isDirectory } ?: return emptyList()
         val relBase = root.parentFile ?: root
-        return root.walkTopDown()
-            .filter { it.isFile && it.name == "manifest.json" && it.path.contains("src/main/resources") }
+        return CanonicalRoots.walkSafeFiles(root)
+            .filter { it.name == "manifest.json" && it.path.contains("src/main/resources") }
             .mapNotNull { file ->
                 val relPath = file.relativeTo(relBase).path.replace(java.io.File.separatorChar, '/')
                 ManifestParser.parse(relPath, file.readBytes())

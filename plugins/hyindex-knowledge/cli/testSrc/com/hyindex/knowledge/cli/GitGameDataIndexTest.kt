@@ -41,7 +41,7 @@ class GitGameDataIndexTest {
 
 
         val base = Files.createTempDirectory("hyindex-git-gd").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_test")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_test")
         val log = StdoutLogProvider
         val db = KnowledgeDatabase.forFile(File(base, "knowledge.db"), log)
         val cache = EmbeddingCacheService(EmbeddingCacheDatabase.forFile(File(base, "embedding-cache.db"), log), log)

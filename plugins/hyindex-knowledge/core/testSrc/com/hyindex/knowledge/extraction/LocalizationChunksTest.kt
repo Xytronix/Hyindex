@@ -56,6 +56,8 @@ class LocalizationChunksTest {
         assertThat(locChunks).hasSize(1)
         assertThat(locChunks.first().textForEmbedding).contains("Neutral")
         assertThat(locChunks.first().textForEmbedding).contains("Scarred")
+        assertThat(locChunks.first().rawJson).contains("Neutral")
+        assertThat(locChunks.first().rawJson).contains("Scarred")
 
         File(root.toString()).deleteRecursively()
     }

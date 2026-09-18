@@ -77,6 +77,25 @@ class KnowledgeDatabase private constructor(
             }
             setSchemaVersion(conn, 6)
         }
+        if (currentVersion < 7) {
+            log.info("Migrating knowledge database to schema v7 (embedding profile provenance)")
+            val previousAutoCommit = conn.autoCommit
+            conn.autoCommit = false
+            try {
+                conn.createStatement().use { stmt ->
+                    for (sql in SCHEMA_V7_STATEMENTS) {
+                        stmt.executeUpdate(sql)
+                    }
+                }
+                setSchemaVersion(conn, 7)
+                conn.commit()
+            } catch (error: Exception) {
+                conn.rollback()
+                throw error
+            } finally {
+                conn.autoCommit = previousAutoCommit
+            }
+        }
     }
 
     private fun getSchemaVersion(conn: Connection): Int {
@@ -240,5 +259,38 @@ class KnowledgeDatabase private constructor(
 
         internal const val SCHEMA_V6 =
             "CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(node_id UNINDEXED, corpus UNINDEXED, name, body, tokenize='unicode61')"
+
+        internal val SCHEMA_V7_STATEMENTS = listOf(
+            "CREATE INDEX IF NOT EXISTS idx_nodes_corpus_chunk ON nodes(corpus, chunk_index)",
+            """
+            CREATE TABLE IF NOT EXISTS corpus_provenance (
+                corpus                   TEXT PRIMARY KEY,
+                provider                 TEXT NOT NULL,
+                document_model           TEXT NOT NULL,
+                query_compatible_family  TEXT NOT NULL,
+                dimensions               INTEGER NOT NULL,
+                indexed_at               TEXT NOT NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE file_hashes_v7 (
+                corpus_type TEXT NOT NULL,
+                file_path   TEXT NOT NULL,
+                file_hash   TEXT NOT NULL,
+                indexed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (corpus_type, file_path)
+            )
+            """.trimIndent(),
+            """
+            INSERT OR REPLACE INTO file_hashes_v7 (corpus_type, file_path, file_hash, indexed_at)
+            SELECT CASE WHEN corpus_type = 'java' THEN 'code' ELSE corpus_type END,
+                   file_path, file_hash, indexed_at
+            FROM file_hashes
+            """.trimIndent(),
+            "DROP TABLE file_hashes",
+            "ALTER TABLE file_hashes_v7 RENAME TO file_hashes",
+            "CREATE INDEX IF NOT EXISTS idx_file_hashes_corpus ON file_hashes(corpus_type)",
+        )
+        internal const val SCHEMA_V7 = ""
     }
 }

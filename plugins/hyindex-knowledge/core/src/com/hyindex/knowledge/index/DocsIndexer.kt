@@ -4,9 +4,11 @@ package com.hyindex.knowledge.index
 import com.hyindex.knowledge.core.db.Corpus
 import com.hyindex.knowledge.core.embedding.EmbeddingProvider
 import com.hyindex.knowledge.core.embedding.embedBatched
+import com.hyindex.knowledge.core.index.ContextualDocumentGroups
 import com.hyindex.knowledge.core.index.HnswIndex
 import com.hyindex.knowledge.core.index.IndexContext
 import com.hyindex.knowledge.core.index.IndexResult
+import com.hyindex.knowledge.core.index.SourceChunk
 import com.hyindex.knowledge.extraction.DocsChunk
 import com.hyindex.knowledge.extraction.DocsParser
 import kotlinx.coroutines.runBlocking
@@ -46,7 +48,10 @@ class DocsIndexer(
         }
 
         if (docRoots.isNotEmpty()) {
-            val local = DocsParser.parseLocalMarkdown(docRoots) { c, t, f -> ctx.progress.status("docs(local) $c/$t $f") }
+            val local = DocsParser.parseLocalMarkdown(
+                docRoots,
+                onProgress = { c, t, f -> ctx.progress.status("docs(local) $c/$t $f") },
+            )
             allChunks += local.chunks; errors += local.errors
         }
 
@@ -85,7 +90,7 @@ class DocsIndexer(
         }
 
 
-        val chunksToEmbed = allChunks
+        val chunksToEmbed = allChunks.toList()
 
         if (ctx.progress.isCanceled) return IndexResult("docs", 0, false, "canceled")
 
@@ -95,33 +100,13 @@ class DocsIndexer(
             ctx.progress.status("Embedding ${chunksToEmbed.size} docs...")
             ctx.progress.fraction(0.35)
 
-            val provider = EmbeddingProvider.fromConfig(ctx.config, Corpus.DOCS.embeddingPurpose)
+            val provider = EmbeddingProvider.fromConfig(ctx.config, Corpus.DOCS)
             runBlocking { provider.validate() }
 
-            val texts = chunksToEmbed.map { it.textForEmbedding }
-            val cacheService = ctx.cache
-            val cacheResult = cacheService.lookup(texts, provider.modelId)
-
-            val uncachedTexts = cacheResult.uncachedIndices.map { texts[it] }
-            val newEmbeddings: List<FloatArray> = if (uncachedTexts.isEmpty()) emptyList() else {
-                val embedded = runBlocking {
-                    provider.embedBatched(
-                        uncachedTexts,
-                        batchSize = 32,
-                        onBatchComplete = { done, total ->
-                            ctx.progress.status("Batch $done/$total (${cacheResult.cached.size} cached)")
-                            ctx.progress.fraction(0.35 + (0.45 * done / total.coerceAtLeast(1)))
-                        },
-                    )
-                }
-                cacheService.store(uncachedTexts, embedded, provider.modelId)
-                embedded
+            val sourceChunks = chunksToEmbed.map {
+                SourceChunk(Corpus.DOCS, it.textForEmbedding, relativePath = it.relativePath)
             }
-
-            val merged = arrayOfNulls<FloatArray>(texts.size)
-            for ((idx, vec) in cacheResult.cached) { merged[idx] = vec }
-            for ((i, origIdx) in cacheResult.uncachedIndices.withIndex()) { merged[origIdx] = newEmbeddings[i] }
-            embeddings = merged.map { it!! }
+            embeddings = ContextualDocumentGroups.embedInOrder(sourceChunks, provider, ctx.cache)
         } else {
             embeddings = emptyList()
         }
@@ -134,7 +119,7 @@ class DocsIndexer(
 
         val stalePaths = changes.changed + changes.deleted
         if (stalePaths.isNotEmpty()) {
-            hashTracker.removeHashes(stalePaths)
+            hashTracker.removeHashes(stalePaths, Corpus.DOCS.id)
             db.inTransaction { conn ->
                 val ps = conn.prepareStatement("DELETE FROM nodes WHERE id = ? AND corpus = ?")
                 for (path in stalePaths) {

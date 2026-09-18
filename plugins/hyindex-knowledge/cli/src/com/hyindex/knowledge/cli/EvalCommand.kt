@@ -37,22 +37,22 @@ data class EvalArgs(
         """.trimIndent()
 
         fun parse(args: List<String>): EvalArgs {
-            val m = HashMap<String, String>()
+            val values = HashMap<String, String>()
             val sweep = ArrayList<String>()
             var i = 0
             while (i < args.size) {
-                when (val k = args[i]) {
+                when (val key = args[i]) {
                     "--golden", "--patchline", "--baseline" ->
-                        m[k] = args.getOrElse(++i) { error("missing value for $k") }
-                    "--sweep" ->
-                        sweep.add(args.getOrElse(++i) { error("missing value for $k") })
-                    else -> error("unknown eval arg: $k")
-                }; i++
+                        values[key] = args.getOrElse(++i) { error("missing value for $key") }
+                    "--sweep" -> sweep.add(args.getOrElse(++i) { error("missing value for $key") })
+                    else -> error("unknown eval arg: $key")
+                }
+                i++
             }
             return EvalArgs(
-                golden = m["--golden"],
-                patchline = m["--patchline"] ?: "release",
-                baseline = m["--baseline"]?.toDouble(),
+                golden = values["--golden"],
+                patchline = values["--patchline"] ?: "release",
+                baseline = values["--baseline"]?.toDouble(),
                 sweep = sweep,
             )
         }
@@ -63,12 +63,10 @@ fun runEval(args: List<String>) {
     val opts = EvalArgs.parse(args)
     val log = StdoutLogProvider
     val queries: List<GoldenQuery> = opts.golden?.let { GoldenSet.load(it) } ?: GoldenSet.loadSeed()
-
     val baseConfig = KnowledgeConfig.loadFromFile() ?: KnowledgeConfig()
     val basePath = baseConfig.resolvedBasePath()
     val slug = VersionResolver.latestSlug(basePath, opts.patchline) ?: opts.patchline
     val config = baseConfig.copy(activeVersion = slug)
-
     val dbFile = File(config.resolvedIndexPath(), "knowledge.db")
     if (!dbFile.exists()) {
         log.error("No knowledge.db for patchline '${opts.patchline}' (slug '$slug') at ${dbFile.absolutePath}")
@@ -77,7 +75,6 @@ fun runEval(args: List<String>) {
 
     val db = KnowledgeDatabase.forFile(dbFile, log)
     val indexManager = CorpusIndexManager(config, log)
-
     try {
         if (opts.sweep.isNotEmpty()) {
             runSweep(db, indexManager, log, config, queries, opts.sweep)
@@ -117,7 +114,7 @@ private fun runSweep(
             service.close()
         }
     }
-    val best = rows.maxByOrNull { (_, m) -> m.recallAt5 * 1000.0 + m.mrr }
+    val best = rows.maxByOrNull { (_, metrics) -> metrics.recallAt5 * 1000.0 + metrics.mrr }
     println(renderSweep(rows, knobs, best?.first))
 }
 
@@ -132,20 +129,22 @@ private fun renderSweep(
     val header = knobs.joinToString("  ") + (if (knobs.isEmpty()) "" else "  ") +
         "R@1     R@5     R@10    MRR     nDCG@10  best"
     sb.appendLine(header)
-    for ((combo, m) in rows) {
+    for ((combo, metrics) in rows) {
         val knobCols = knobs.joinToString("  ") { combo[it] ?: "-" }
         val mark = if (combo == bestCombo) "*" else ""
         sb.appendLine(
             (if (knobs.isEmpty()) "" else "$knobCols  ") +
-                "${num(m.recallAt1)}   ${num(m.recallAt5)}   ${num(m.recallAt10)}   ${num(m.mrr)}   ${num(m.ndcgAt10)}    $mark",
+                "${num(metrics.recallAt1)}   ${num(metrics.recallAt5)}   ${num(metrics.recallAt10)}   " +
+                "${num(metrics.mrr)}   ${num(metrics.ndcgAt10)}    $mark",
         )
     }
     sb.appendLine()
     if (bestCombo != null) {
-        val bestStr = if (bestCombo.isEmpty()) "(base config)" else bestCombo.entries.joinToString(", ") { "${it.key}=${it.value}" }
-        sb.appendLine("Best (by Recall@5, tie-break MRR): $bestStr")
+        val best = if (bestCombo.isEmpty()) "(base config)" else
+            bestCombo.entries.joinToString(", ") { "${it.key}=${it.value}" }
+        sb.appendLine("Best (by Recall@5, tie-break MRR): $best")
     }
     return sb.toString()
 }
 
-private fun num(v: Double): String = String.format("%.3f", v)
+private fun num(value: Double): String = String.format("%.3f", value)

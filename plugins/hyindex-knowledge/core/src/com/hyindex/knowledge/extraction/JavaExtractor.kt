@@ -4,10 +4,10 @@ package com.hyindex.knowledge.extraction
 import com.github.javaparser.ParseProblemException
 import com.github.javaparser.StaticJavaParser
 import com.github.javaparser.ast.Modifier
-import com.github.javaparser.ast.body.CallableDeclaration
+import com.github.javaparser.ast.Node
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
-import com.github.javaparser.ast.body.ConstructorDeclaration
 import com.github.javaparser.ast.body.EnumDeclaration
+import com.github.javaparser.ast.body.RecordDeclaration
 import com.github.javaparser.ast.expr.InstanceOfExpr
 import com.github.javaparser.ast.expr.MethodCallExpr
 import com.github.javaparser.ast.expr.NameExpr
@@ -89,8 +89,12 @@ object JavaExtractor {
                             classRelations.add(ClassRelation(fqcn, perm.nameAsString, "PERMITS", relPath))
                         }
 
-                        for (method in n.methods) collectCalls(fqcn, method, relPath, callRelations, counters, typeCheckRelations)
-                        for (ctor in n.constructors) collectCalls(fqcn, ctor, relPath, callRelations, counters, typeCheckRelations)
+                        for (method in n.methods) {
+                            collectCalls(fqcn, method, method.nameAsString, relPath, callRelations, counters, typeCheckRelations)
+                        }
+                        for (ctor in n.constructors) {
+                            collectCalls(fqcn, ctor, "<init>", relPath, callRelations, counters, typeCheckRelations)
+                        }
 
                         super.visit(n, arg)
                     }
@@ -103,8 +107,34 @@ object JavaExtractor {
                             classRelations.add(ClassRelation(fqcn, impl.nameAsString, "IMPLEMENTS", relPath))
                         }
 
-                        for (method in n.methods) collectCalls(fqcn, method, relPath, callRelations, counters, typeCheckRelations)
-                        for (ctor in n.constructors) collectCalls(fqcn, ctor, relPath, callRelations, counters, typeCheckRelations)
+                        for (method in n.methods) {
+                            collectCalls(fqcn, method, method.nameAsString, relPath, callRelations, counters, typeCheckRelations)
+                        }
+                        for (ctor in n.constructors) {
+                            collectCalls(fqcn, ctor, "<init>", relPath, callRelations, counters, typeCheckRelations)
+                        }
+
+                        super.visit(n, arg)
+                    }
+
+                    override fun visit(n: RecordDeclaration, arg: Void?) {
+                        val pkg = cu.packageDeclaration.map { it.nameAsString }.orElse("")
+                        val fqcn = n.fullyQualifiedName.orElse(
+                            if (pkg.isNotEmpty()) "$pkg.${n.nameAsString}" else n.nameAsString,
+                        )
+
+                        for (impl in n.implementedTypes) {
+                            classRelations.add(ClassRelation(fqcn, impl.nameAsString, "IMPLEMENTS", relPath))
+                        }
+                        for (method in n.methods) {
+                            collectCalls(fqcn, method, method.nameAsString, relPath, callRelations, counters, typeCheckRelations)
+                        }
+                        for (ctor in n.constructors) {
+                            collectCalls(fqcn, ctor, "<init>", relPath, callRelations, counters, typeCheckRelations)
+                        }
+                        for (ctor in n.compactConstructors) {
+                            collectCalls(fqcn, ctor, "<init>", relPath, callRelations, counters, typeCheckRelations)
+                        }
 
                         super.visit(n, arg)
                     }
@@ -230,13 +260,13 @@ object JavaExtractor {
 
     private fun collectCalls(
         fqcn: String,
-        callable: CallableDeclaration<*>,
+        callable: Node,
+        methodName: String,
         owningFile: String,
         out: MutableList<CallRelation>,
         counters: Counters,
         typeChecks: MutableList<TypeCheckRelation>,
     ) {
-        val methodName = if (callable is ConstructorDeclaration) "<init>" else callable.nameAsString
         val sourceMethodId = "$fqcn#$methodName"
 
         for (creation in callable.findAll(ObjectCreationExpr::class.java)) {

@@ -4,9 +4,11 @@ package com.hyindex.knowledge.index
 import com.hyindex.knowledge.core.db.Corpus
 import com.hyindex.knowledge.core.embedding.EmbeddingProvider
 import com.hyindex.knowledge.core.embedding.embedBatched
+import com.hyindex.knowledge.core.index.ContextualDocumentGroups
 import com.hyindex.knowledge.core.index.HnswIndex
 import com.hyindex.knowledge.core.index.IndexContext
 import com.hyindex.knowledge.core.index.IndexResult
+import com.hyindex.knowledge.core.index.SourceChunk
 import com.hyindex.knowledge.extraction.ClientUIParser
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Paths
@@ -88,33 +90,13 @@ class ClientUiIndexer(private val ctx: IndexContext) {
             ctx.progress.status("Embedding ${chunksToEmbed.size} chunks...")
             ctx.progress.fraction(0.2)
 
-            val provider = EmbeddingProvider.fromConfig(ctx.config, Corpus.CLIENT.embeddingPurpose)
+            val provider = EmbeddingProvider.fromConfig(ctx.config, Corpus.CLIENT)
             runBlocking { provider.validate() }
 
-            val texts = chunksToEmbed.map { it.textForEmbedding }
-            val cacheService = ctx.cache
-            val cacheResult = cacheService.lookup(texts, provider.modelId)
-
-            val uncachedTexts = cacheResult.uncachedIndices.map { texts[it] }
-            val newEmbeddings: List<FloatArray> = if (uncachedTexts.isEmpty()) emptyList() else {
-                val embedded = runBlocking {
-                    provider.embedBatched(
-                        uncachedTexts,
-                        batchSize = 32,
-                        onBatchComplete = { done, total ->
-                            ctx.progress.status("Batch $done/$total (${cacheResult.cached.size} cached)")
-                            ctx.progress.fraction(0.2 + (0.5 * done / total.coerceAtLeast(1)))
-                        },
-                    )
-                }
-                cacheService.store(uncachedTexts, embedded, provider.modelId)
-                embedded
+            val sourceChunks = chunksToEmbed.map {
+                SourceChunk(Corpus.CLIENT, it.textForEmbedding, relativePath = it.relativePath)
             }
-
-            val merged = arrayOfNulls<FloatArray>(texts.size)
-            for ((idx, vec) in cacheResult.cached) { merged[idx] = vec }
-            for ((i, origIdx) in cacheResult.uncachedIndices.withIndex()) { merged[origIdx] = newEmbeddings[i] }
-            embeddings = merged.map { it!! }
+            embeddings = ContextualDocumentGroups.embedInOrder(sourceChunks, provider, ctx.cache)
         } else {
             embeddings = emptyList()
         }
@@ -128,7 +110,7 @@ class ClientUiIndexer(private val ctx: IndexContext) {
 
         val stalePaths = changes.changed + changes.deleted
         if (stalePaths.isNotEmpty()) {
-            hashTracker.removeHashes(stalePaths)
+            hashTracker.removeHashes(stalePaths, Corpus.CLIENT.id)
             db.inTransaction { conn ->
                 val ps = conn.prepareStatement("DELETE FROM nodes WHERE owning_file = ? AND corpus = ?")
                 for (path in stalePaths) {

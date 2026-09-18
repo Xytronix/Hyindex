@@ -11,6 +11,12 @@ enum class Corpus(
     CLIENT("client", "Client UI", "client.hnsw", EmbeddingPurpose.TEXT),
     GAMEDATA("gamedata", "Game Data", "gamedata.hnsw", EmbeddingPurpose.TEXT),
     DOCS("docs", "Modding Docs", "docs.hnsw", EmbeddingPurpose.TEXT),
+    VISUAL("visual", "Visual Assets", "visual.hnsw", EmbeddingPurpose.IMAGE),
+    ;
+
+    companion object {
+        val SEARCH_DEFAULT: List<Corpus> = listOf(CODE, CLIENT, GAMEDATA, DOCS)
+    }
 }
 
-enum class EmbeddingPurpose { CODE, TEXT }
+enum class EmbeddingPurpose { CODE, TEXT, IMAGE }

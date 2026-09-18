@@ -61,6 +61,7 @@ class HytaleKnowledgeServer(
             searchClientTool(),
             searchGamedataTool(),
             searchDocsTool(),
+            searchVisualTool(),
             statsTool(),
             diffVersionsTool(),
             getFilePathTool(),
@@ -98,10 +99,10 @@ class HytaleKnowledgeServer(
 
 
     private fun loadForSlug(slug: String): KnowledgeSearchService? {
+        if (!VersionResolver.isSafeToken(slug)) return null
         lazyServices[slug]?.let { return it }
+        val dbFile = VersionResolver.existingKnowledgeDb(basePath, slug) ?: return null
         val slugConfig = config.copy(activeVersion = slug)
-        val dbFile = File(slugConfig.resolvedIndexPath(), "knowledge.db")
-        if (!dbFile.exists()) return null
         val log = StdoutLogProvider
         val db = KnowledgeDatabase.forFile(dbFile, log)
         val indexManager = CorpusIndexManager(slugConfig, log)
@@ -111,69 +112,128 @@ class HytaleKnowledgeServer(
         return service
     }
 
-    private fun normalizePatchline(patchline: String): String {
-        if ('@' in patchline || patchline in latestSlugs) return patchline
+    private fun normalizePatchline(patchline: String): String? {
+        if ('@' in patchline) {
+            val parts = patchline.split('@', limit = 2)
+            if (parts.size != 2) return null
+            val (line, version) = parts
+            if (!VersionResolver.isSafeToken(line) || !VersionResolver.isSafeToken(version)) return null
+            return patchline
+        }
+        if (!VersionResolver.isSafeToken(patchline)) return null
+        if (patchline in latestSlugs || patchline in services) return patchline
         val line = latestSlugs.keys.filter { patchline.startsWith("${it}_") }.maxByOrNull { it.length }
             ?: return patchline
-        return "$line@${patchline.removePrefix("${line}_")}"
+        val rest = patchline.removePrefix("${line}_")
+        if (!VersionResolver.isSafeToken(rest)) return null
+        return "$line@$rest"
     }
 
     internal fun serviceForPatchline(patchline: String, warningOut: StringBuilder? = null): KnowledgeSearchService? {
-        val ref = normalizePatchline(patchline)
+        val ref = normalizePatchline(patchline) ?: return null
         if ('@' !in ref) {
             services[ref]?.let { return it }
-            val fallback = services.values.firstOrNull() ?: return null
-            warningOut?.append(" [Note: patchline '$patchline' not loaded; using '${services.keys.first()}' instead.]")
-            return fallback
+            VersionResolver.existingVersionDir(basePath, ref)?.name?.let { slug ->
+                val line = latestSlugs.entries.firstOrNull { it.value == slug }?.key
+                if (line != null && slug == latestSlugs[line]) return services[line]
+                return loadForSlug(slug)
+            }
+            return null
         }
         val (line, version) = ref.split('@', limit = 2)
-        val slug = VersionResolver.resolveSlug(basePath, line, version)
-        if (slug == null) {
-            warningOut?.append(" [Note: version '$version' not found for '$line'; using latest]")
-            return services[line] ?: services.values.firstOrNull()
-        }
-        if (slug == latestSlugs[line]) return services[line] ?: services.values.firstOrNull()
-        val loaded = lazyServices[slug] ?: loadForSlug(slug)
-        if (loaded != null) return loaded
-        warningOut?.append(" [Note: version '$version' could not be loaded for '$line'; using latest]")
-        return services[line] ?: services.values.firstOrNull()
+        val slug = VersionResolver.resolveSlug(basePath, line, version) ?: return null
+        if (slug == latestSlugs[line]) return services[line]
+        return loadForSlug(slug)
     }
 
     internal fun dbForPatchline(patchline: String, warningOut: StringBuilder? = null): KnowledgeDatabase? {
-        val ref = normalizePatchline(patchline)
+        val ref = normalizePatchline(patchline) ?: return null
         if ('@' !in ref) {
             databases[ref]?.let { return it }
-            val fallback = databases.values.firstOrNull() ?: return null
-            warningOut?.append(" [Note: patchline '$patchline' not loaded; using '${databases.keys.first()}' instead.]")
-            return fallback
+            VersionResolver.existingVersionDir(basePath, ref)?.name?.let { slug ->
+                val line = latestSlugs.entries.firstOrNull { it.value == slug }?.key
+                if (line != null && slug == latestSlugs[line]) return databases[line]
+                if (loadForSlug(slug) != null) return lazyDbs[slug]
+            }
+            return null
         }
         val (line, version) = ref.split('@', limit = 2)
-        val slug = VersionResolver.resolveSlug(basePath, line, version)
-        if (slug == null) {
-            warningOut?.append(" [Note: version '$version' not found for '$line'; using latest]")
-            return databases[line] ?: databases.values.firstOrNull()
-        }
-        if (slug == latestSlugs[line]) return databases[line] ?: databases.values.firstOrNull()
+        val slug = VersionResolver.resolveSlug(basePath, line, version) ?: return null
+        if (slug == latestSlugs[line]) return databases[line]
         if (loadForSlug(slug) != null) return lazyDbs[slug]
-        warningOut?.append(" [Note: version '$version' could not be loaded for '$line'; using latest]")
-        return databases[line] ?: databases.values.firstOrNull()
+        return null
     }
 
     internal fun sourceRootForPatchline(patchline: String): File? {
-        val ref = normalizePatchline(patchline)
+        val ref = normalizePatchline(patchline) ?: return null
         val slug = if ('@' in ref) {
             val (line, version) = ref.split('@', limit = 2)
-            VersionResolver.resolveSlug(basePath, line, version) ?: latestSlugs[line]
+            VersionResolver.resolveSlug(basePath, line, version)
         } else {
-            latestSlugs[ref] ?: latestSlugs.values.firstOrNull()
+            latestSlugs[ref] ?: VersionResolver.existingVersionDir(basePath, ref)?.name
         } ?: return null
-        return File(File(basePath, "versions/$slug"), "source")
+        val dir = VersionResolver.existingVersionDir(basePath, slug) ?: return null
+        return File(dir, "source")
     }
 
     fun close() {
         lazyServices.values.forEach { it.close() }
         lazyDbs.values.forEach { it.close() }
     }
+
+    private val enabledCorpora: Set<Corpus> = Corpus.entries.toSet()
+
+    private fun corpusOf(id: String?): Corpus? {
+        if (id.isNullOrBlank()) return null
+        return Corpus.entries.firstOrNull { it.id.equals(id, ignoreCase = true) }
+    }
+
+    private fun isAuthorized(corpus: Corpus, relativePath: String): Boolean = true
+
+    private fun isAuthorized(corpusId: String?, relativePath: String): Boolean =
+        corpusOf(corpusId) != null
+
+    private fun filterAuthorizedResults(results: List<SearchResult>): List<SearchResult> =
+        results.filter { corpusOf(it.corpus) != null }
+
+    private fun unauthorizedCorpus(corpus: Corpus): CallToolResult =
+        errorResult("Corpus '${corpus.id}' is not enabled")
+
+    private fun unauthorizedNode(): CallToolResult =
+        errorResult("Node is not authorized")
+
+    private fun nodeNotFound(): CallToolResult =
+        errorResult("Node not found")
+
+    private fun authorizeSeedNode(db: KnowledgeDatabase, searchService: KnowledgeSearchService, id: String): Pair<String?, CallToolResult?> {
+        val resolution = searchService.resolveNodeId(id)
+        if (resolution.id == null && resolution.candidates.isNotEmpty()) {
+            return null to successResult(json.encodeToString(buildJsonObject {
+                put("found", false)
+                put("note", "Ambiguous id.")
+                put("candidates", buildJsonArray { resolution.candidates.forEach { add(it) } })
+            }))
+        }
+        val lookupId = resolution.id ?: id
+        val meta = db.query(
+            "SELECT corpus, file_path FROM nodes WHERE id = ? LIMIT 1",
+            lookupId,
+        ) { it.getString("corpus") to (it.getString("file_path") ?: "") }
+        if (meta.isEmpty()) {
+            if (resolution.id == null) {
+                val exists = db.query(
+                    "SELECT corpus, file_path FROM nodes WHERE id = ? LIMIT 1",
+                    id,
+                ) { it.getString("corpus") to (it.getString("file_path") ?: "") }
+                if (exists.isNotEmpty()) return null to unauthorizedNode()
+            }
+            return null to nodeNotFound()
+        }
+        if (!isAuthorized(meta.first().first, meta.first().second)) return null to unauthorizedNode()
+        return lookupId to null
+    }
+
+
 
 
     private fun searchCodeTool(): RegisteredTool {
@@ -214,7 +274,7 @@ class HytaleKnowledgeServer(
             val searchService = serviceForPatchline(patchline, warning) ?: return@RegisteredTool errorResult("No knowledge index loaded.")
             try {
                 val results = if (expand) {
-                    searchService.searchWithExpansion(query, Corpus.entries, limit.coerceIn(1, 20))
+                    searchService.searchWithExpansion(query, Corpus.SEARCH_DEFAULT, limit.coerceIn(1, 20))
                 } else {
                     searchService.searchCode(query, classFilter, limit.coerceIn(1, 20), pathPrefix = pathPrefix, classExact = classExact, pathExact = pathExact, visibility = visibility, annotation = annotation)
                 }
@@ -353,6 +413,37 @@ class HytaleKnowledgeServer(
         }
     }
 
+    private fun searchVisualTool(): RegisteredTool {
+        val tool = Tool(
+            name = "search_hytale_visual",
+            description = "Search the isolated visual/raster asset corpus (icons, textures) using voyage-multimodal-3.5. " +
+                "Opt-in: not included in default search_hytale. Requires a built visual.hnsw index.",
+            inputSchema = toolSchema(
+                "query" to propString("Natural language description of the image or icon to find"),
+                "limit" to propInt("Number of results to return (default 5, max 20)"),
+                "verbosity" to propString("Output detail per result: ids | compact | full (default full)."),
+                "patchline" to propString("Patchline or pinned version: release | pre-release | <patchline>@<version> (default release)."),
+                required = listOf("query"),
+            ),
+        )
+        return RegisteredTool(tool) { request ->
+            val query = request.arguments?.getString("query") ?: return@RegisteredTool errorResult("Missing 'query' parameter")
+            val limit = request.arguments?.getInt("limit") ?: 5
+            val verbosity = parseVerbosity(request.arguments?.getString("verbosity"))
+            val patchline = request.arguments?.getString("patchline") ?: "release"
+            val warning = StringBuilder()
+            val searchService = serviceForPatchline(patchline, warning) ?: return@RegisteredTool errorResult("No knowledge index loaded.")
+            if (Corpus.VISUAL !in enabledCorpora) return@RegisteredTool unauthorizedCorpus(Corpus.VISUAL)
+            try {
+                val results = searchService.searchCorpus(query, Corpus.VISUAL, limit.coerceIn(1, 20))
+                successResult(encodeSearchResults(query, results, warning.toString(), verbosity))
+            } catch (e: Exception) {
+                errorResult("Search failed: ${e.message}")
+            }
+        }
+    }
+
+
     private fun searchHytaleTool(): RegisteredTool {
         val tool = Tool(
             name = "search_hytale",
@@ -375,14 +466,8 @@ class HytaleKnowledgeServer(
             val warning = StringBuilder()
             val searchService = serviceForPatchline(patchline, warning) ?: return@RegisteredTool errorResult("No knowledge index loaded.")
             try {
-                val perCorpus = limit.coerceIn(1, 100)
-                val merged = Corpus.entries.flatMap { corpus ->
-                    try {
-                        searchService.searchCorpus(query, corpus, perCorpus)
-                    } catch (e: Exception) {
-                        emptyList()
-                    }
-                }.sortedByDescending { it.score }.distinctBy { it.nodeId }.take(perCorpus)
+                val resultLimit = limit.coerceIn(1, 100)
+                val merged = searchService.searchAcrossCorpora(query, Corpus.SEARCH_DEFAULT, resultLimit)
                 successResult(encodeSearchResults(query, merged, warning.toString(), verbosity))
             } catch (e: Exception) {
                 errorResult("Search failed: ${e.message}")
@@ -407,10 +492,9 @@ class HytaleKnowledgeServer(
             try {
                 if (corpus == "all") {
                     val obj = buildJsonObject {
-                        put("code", json.encodeToJsonElement(com.hyindex.knowledge.core.search.IndexStats.serializer(), searchService.getCorpusStats(Corpus.CODE)))
-                        put("gamedata", json.encodeToJsonElement(com.hyindex.knowledge.core.search.IndexStats.serializer(), searchService.getCorpusStats(Corpus.GAMEDATA)))
-                        put("docs", json.encodeToJsonElement(com.hyindex.knowledge.core.search.IndexStats.serializer(), searchService.getCorpusStats(Corpus.DOCS)))
-                        put("client", json.encodeToJsonElement(com.hyindex.knowledge.core.search.IndexStats.serializer(), searchService.getCorpusStats(Corpus.CLIENT)))
+                        for (item in enabledCorpora.sortedBy { it.id }) {
+                            put(item.id, json.encodeToJsonElement(com.hyindex.knowledge.core.search.IndexStats.serializer(), searchService.getCorpusStats(item)))
+                        }
                     }
                     successResult(json.encodeToString(obj))
                 } else {
@@ -419,8 +503,10 @@ class HytaleKnowledgeServer(
                         "gamedata" -> Corpus.GAMEDATA
                         "docs" -> Corpus.DOCS
                         "client" -> Corpus.CLIENT
+                        "visual" -> Corpus.VISUAL
                         else -> return@RegisteredTool errorResult("Unknown corpus: $corpus")
                     }
+                    if (selected !in enabledCorpora) return@RegisteredTool unauthorizedCorpus(selected)
                     val stats = searchService.getCorpusStats(selected)
                     successResult(json.encodeToString(com.hyindex.knowledge.core.search.IndexStats.serializer(), stats))
                 }
@@ -475,33 +561,35 @@ class HytaleKnowledgeServer(
                 data class VersionSource(val file: File, val isSnapshot: Boolean, val label: String)
 
                 fun resolveVersion(ref: String): VersionSource? {
-                    return if ('@' in ref) {
-                        val (patchline, version) = ref.split('@', limit = 2)
-                        val f = File(basePath, "snapshots/$patchline/$version.json")
-                        VersionSource(f, isSnapshot = true, label = ref)
+                    val normalized = normalizePatchline(ref) ?: return null
+                    return if ('@' in normalized) {
+                        val (patchline, version) = normalized.split('@', limit = 2)
+                        val snap = VersionResolver.existingSnapshot(basePath, patchline, version)
+                        if (snap != null) VersionSource(snap, isSnapshot = true, label = normalized)
+                        else {
+                            val slug = VersionResolver.resolveSlug(basePath, patchline, version) ?: return null
+                            val db = VersionResolver.existingKnowledgeDb(basePath, slug) ?: return null
+                            VersionSource(db, isSnapshot = false, label = slug)
+                        }
                     } else {
-                        val slug = VersionResolver.latestSlug(basePath, ref) ?: ref
-                        val f = File(basePath, "versions/$slug/knowledge.db")
-                        VersionSource(f, isSnapshot = false, label = ref)
+                        val slug = VersionResolver.latestSlug(basePath, normalized)
+                            ?: VersionResolver.existingVersionDir(basePath, normalized)?.name
+                            ?: return null
+                        val db = VersionResolver.existingKnowledgeDb(basePath, slug) ?: return null
+                        VersionSource(db, isSnapshot = false, label = slug)
                     }
                 }
 
                 val srcA = resolveVersion(versionA)
-                    ?: return@RegisteredTool errorResult("Could not resolve version ref: $versionA")
+                    ?: return@RegisteredTool errorResult("Could not resolve version ref")
                 val srcB = resolveVersion(versionB)
-                    ?: return@RegisteredTool errorResult("Could not resolve version ref: $versionB")
+                    ?: return@RegisteredTool errorResult("Could not resolve version ref")
 
-                if (!srcA.file.exists()) return@RegisteredTool errorResult(
-                    "Version A source not found at ${srcA.file.absolutePath}" +
-                    if (srcA.isSnapshot) " (snapshot for ${versionA} not yet written — run indexer to generate it)" else ""
-                )
-                if (!srcB.file.exists()) return@RegisteredTool errorResult(
-                    "Version B source not found at ${srcB.file.absolutePath}" +
-                    if (srcB.isSnapshot) " (snapshot for ${versionB} not yet written — run indexer to generate it)" else ""
-                )
+                if (!srcA.file.exists()) return@RegisteredTool errorResult("Version A source not found")
+                if (!srcB.file.exists()) return@RegisteredTool errorResult("Version B source not found")
 
-                val keyA = if ('@' in versionA) versionA else (VersionResolver.latestSlug(basePath, versionA) ?: versionA)
-                val keyB = if ('@' in versionB) versionB else (VersionResolver.latestSlug(basePath, versionB) ?: versionB)
+                val keyA = srcA.label
+                val keyB = srcB.label
                 val canCache = !srcA.isSnapshot && !srcB.isSnapshot && scope == null
                 val cache = DiffCache(basePath, log)
                 val cached = if (canCache) cache.get(keyA, keyB) else null
@@ -521,6 +609,8 @@ class HytaleKnowledgeServer(
                         dataTypeFilter = dataType,
                         scopeFilter = scope,
                         limit = limit.coerceIn(1, 200),
+                        indexRoot = basePath,
+                        authorized = { corpusId, path -> isAuthorized(corpusId, path) },
                     )
                     if (canCache) cache.put(result)
                     result
@@ -666,6 +756,9 @@ class HytaleKnowledgeServer(
             val corpus = if (corpusArg == "all") null
                 else Corpus.entries.firstOrNull { it.id == corpusArg }
                     ?: return@RegisteredTool errorResult("Unknown corpus: $corpusArg")
+            if (corpus != null && corpus !in enabledCorpora) {
+                return@RegisteredTool unauthorizedCorpus(corpus)
+            }
             val limit = (request.arguments?.getInt("limit") ?: 20).coerceIn(1, 100)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
@@ -697,6 +790,7 @@ class HytaleKnowledgeServer(
                     val nodeCorpus = rs.getString("corpus") ?: ""
                     val filePath = rs.getString("file_path") ?: ""
                     val displayName = rs.getString("display_name") ?: ""
+                    if (!isAuthorized(nodeCorpus, filePath)) return@query emptyList()
                     lines.withIndex().filter { (_, line) ->
                         if (regex != null) regex.containsMatchIn(line) else line.contains(query, ignoreCase = true)
                     }.take(MAX_LINES_PER_NODE).map { (idx, line) ->
@@ -751,17 +845,20 @@ class HytaleKnowledgeServer(
         val simple = id.substringAfterLast('#').substringAfterLast('.')
         if (simple.isBlank()) return emptyList()
         return db.query(
-            """SELECT id, display_name, node_type FROM nodes
+            """SELECT id, display_name, node_type, corpus, file_path FROM nodes
                WHERE display_name = ? OR display_name LIKE ? OR id LIKE ?
-               LIMIT 10""",
+               LIMIT 20""",
             simple, "%#$simple", "%$simple%",
         ) { rs ->
-            buildJsonObject {
+            val corpus = rs.getString("corpus") ?: ""
+            val path = rs.getString("file_path") ?: ""
+            if (!isAuthorized(corpus, path)) null
+            else buildJsonObject {
                 put("id", rs.getString("id"))
                 put("display_name", rs.getString("display_name") ?: "")
                 put("node_type", rs.getString("node_type") ?: "")
             }
-        }
+        }.filterNotNull().take(10)
     }
 
     private fun getHytaleNodeTool(): RegisteredTool {
@@ -817,7 +914,7 @@ class HytaleKnowledgeServer(
                 if (nodes.isEmpty()) {
                     val suggestions = fuzzyNodeSuggestions(db, id)
                     return@RegisteredTool if (suggestions.isEmpty()) {
-                        errorResult("Node not found: $id")
+                        errorResult("Node not found")
                     } else {
                         successResult(json.encodeToString(buildJsonObject {
                             put("requestedId", id)
@@ -828,9 +925,12 @@ class HytaleKnowledgeServer(
                     }
                 }
                 val node = nodes.first()
+                val nodeCorpus = node["corpus"]?.jsonPrimitive?.content
+                val nodePath = node["file_path"]?.jsonPrimitive?.content ?: ""
+                if (!isAuthorized(nodeCorpus, nodePath)) return@RegisteredTool unauthorizedNode()
 
                 val outgoing = db.query(
-                    """SELECT e.edge_type, e.target_id, n.display_name, n.corpus
+                    """SELECT e.edge_type, e.target_id, n.display_name, n.corpus, n.file_path
                        FROM edges e LEFT JOIN nodes n ON n.id = e.target_id
                        WHERE e.source_id = ?""",
                     resolvedId,
@@ -841,11 +941,12 @@ class HytaleKnowledgeServer(
                         put("id", rs.getString("target_id"))
                         put("display_name", rs.getString("display_name") ?: "")
                         put("corpus", rs.getString("corpus") ?: "")
+                        put("file_path", rs.getString("file_path") ?: "")
                     }
-                }
+                }.filter { isAuthorized(it["corpus"]?.jsonPrimitive?.content, it["file_path"]?.jsonPrimitive?.content ?: "") }
 
                 val incoming = db.query(
-                    """SELECT e.edge_type, e.source_id, n.display_name, n.corpus
+                    """SELECT e.edge_type, e.source_id, n.display_name, n.corpus, n.file_path
                        FROM edges e LEFT JOIN nodes n ON n.id = e.source_id
                        WHERE e.target_id = ?""",
                     resolvedId,
@@ -856,8 +957,9 @@ class HytaleKnowledgeServer(
                         put("id", rs.getString("source_id"))
                         put("display_name", rs.getString("display_name") ?: "")
                         put("corpus", rs.getString("corpus") ?: "")
+                        put("file_path", rs.getString("file_path") ?: "")
                     }
-                }
+                }.filter { isAuthorized(it["corpus"]?.jsonPrimitive?.content, it["file_path"]?.jsonPrimitive?.content ?: "") }
 
                 val result = buildJsonObject {
                     put("node", node)
@@ -924,8 +1026,21 @@ class HytaleKnowledgeServer(
                         put("candidates", buildJsonArray { resolution.candidates.forEach { add(it) } })
                     }))
                 }
-                if (resolution.id == null) return@RegisteredTool errorResult("Node not found: $id")
+                if (resolution.id == null) {
+                    val exists = db.query(
+                        "SELECT corpus, file_path FROM nodes WHERE id = ? LIMIT 1",
+                        id,
+                    ) { it.getString("corpus") to (it.getString("file_path") ?: "") }
+                    if (exists.isNotEmpty()) return@RegisteredTool unauthorizedNode()
+                    return@RegisteredTool nodeNotFound()
+                }
                 val startId = resolution.id
+                val startMeta = db.query(
+                    "SELECT corpus, file_path FROM nodes WHERE id = ? LIMIT 1",
+                    startId,
+                ) { it.getString("corpus") to (it.getString("file_path") ?: "") }
+                if (startMeta.isEmpty()) return@RegisteredTool nodeNotFound()
+                if (!isAuthorized(startMeta.first().first, startMeta.first().second)) return@RegisteredTool unauthorizedNode()
 
 
                 data class QueueEntry(val nodeId: String, val edgeType: String, val direction: String, val hopDepth: Int)
@@ -969,16 +1084,16 @@ class HytaleKnowledgeServer(
                     val entry = queue.removeFirst()
                     if (entry.nodeId in visited) continue
                     visited.add(entry.nodeId)
-
                     val nodeRows = db.query(
-                        "SELECT id, display_name, corpus, data_type FROM nodes WHERE id = ? LIMIT 1",
+                        "SELECT id, display_name, corpus, data_type, file_path FROM nodes WHERE id = ? LIMIT 1",
                         entry.nodeId,
                     ) { rs ->
-                        RelatedNode(
+                        val related = RelatedNode(
                             rs.getString("id"), rs.getString("display_name") ?: "", rs.getString("corpus") ?: "",
                             rs.getString("data_type") ?: "", entry.edgeType, entry.direction, entry.hopDepth,
                         )
-                    }
+                        related.takeIf { isAuthorized(it.corpus, rs.getString("file_path") ?: "") }
+                    }.filterNotNull()
                     if (nodeRows.isNotEmpty()) {
                         collected.add(nodeRows.first())
                         enqueueNeighbors(entry.nodeId, entry.hopDepth)
@@ -1019,11 +1134,16 @@ class HytaleKnowledgeServer(
         warning: StringBuilder,
         limit: Int,
         verbosity: Verbosity = Verbosity.FULL,
-        block: (GraphTraversal) -> List<SearchResult>,
+        seedId: String,
+        block: (GraphTraversal, String) -> List<SearchResult>,
     ): CallToolResult {
         val db = dbForPatchline(patchline, warning) ?: return errorResult("No knowledge index loaded.")
+        val searchService = serviceForPatchline(patchline, warning) ?: return errorResult("No knowledge index loaded.")
+        val (resolvedId, error) = authorizeSeedNode(db, searchService, seedId)
+        if (error != null) return error
+        val startId = resolvedId ?: return nodeNotFound()
         return try {
-            val results = block(GraphTraversal(db))
+            val results = filterAuthorizedResults(block(GraphTraversal(db), startId))
             successResult(encodeSearchResults("", results.take(limit), warning.toString(), verbosity))
         } catch (e: Exception) {
             errorResult("Graph traversal failed: ${e.message}")
@@ -1056,11 +1176,11 @@ class HytaleKnowledgeServer(
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val direction = request.arguments?.getString("direction") ?: "both"
             val warning = StringBuilder()
-            traversalResult(patchline, warning, limit) { gt ->
+            traversalResult(patchline, warning, limit, seedId = nodeId) { gt, startId ->
                 when (direction) {
-                    "requires" -> gt.findRecipeInputs(nodeId, limit)
-                    "produces" -> gt.findRecipeOutputs(nodeId, limit)
-                    else -> (gt.findRecipeInputs(nodeId, limit) + gt.findRecipeOutputs(nodeId, limit)).distinctBy { it.nodeId }
+                    "requires" -> gt.findRecipeInputs(startId, limit)
+                    "produces" -> gt.findRecipeOutputs(startId, limit)
+                    else -> (gt.findRecipeInputs(startId, limit) + gt.findRecipeOutputs(startId, limit)).distinctBy { it.nodeId }
                 }
             }
         }
@@ -1085,7 +1205,7 @@ class HytaleKnowledgeServer(
             val limit = (request.arguments?.getInt("limit") ?: 10).coerceIn(1, 50)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
-            traversalResult(patchline, warning, limit) { gt -> gt.findDropsFrom(nodeId, limit) }
+            traversalResult(patchline, warning, limit, seedId = nodeId) { gt, startId -> gt.findDropsFrom(startId, limit) }
         }
     }
 
@@ -1110,7 +1230,7 @@ class HytaleKnowledgeServer(
             val verbosity = parseVerbosity(request.arguments?.getString("verbosity"))
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
-            traversalResult(patchline, warning, limit, verbosity) { gt -> gt.findImplementingCode(nodeId, limit) }
+            traversalResult(patchline, warning, limit, verbosity, seedId = nodeId) { gt, startId -> gt.findImplementingCode(startId, limit) }
         }
     }
 
@@ -1133,7 +1253,7 @@ class HytaleKnowledgeServer(
             val limit = (request.arguments?.getInt("limit") ?: 5).coerceIn(1, 50)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
-            traversalResult(patchline, warning, limit) { gt -> gt.findGamedataForCode(nodeId, limit) }
+            traversalResult(patchline, warning, limit, seedId = nodeId) { gt, startId -> gt.findGamedataForCode(startId, limit) }
         }
     }
 
@@ -1164,20 +1284,9 @@ class HytaleKnowledgeServer(
             val direction = request.arguments?.getString("direction") ?: "callers"
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
-            val searchService = serviceForPatchline(patchline, warning) ?: return@RegisteredTool errorResult("No knowledge index loaded.")
-            val resolution = searchService.resolveNodeId(id)
-            if (resolution.id == null && resolution.candidates.isNotEmpty()) {
-                return@RegisteredTool successResult(json.encodeToString(buildJsonObject {
-                    put("requestedId", id)
-                    put("found", false)
-                    put("note", "Ambiguous id '$id'. Candidate nodes:")
-                    put("candidates", buildJsonArray { resolution.candidates.forEach { add(it) } })
-                }))
-            }
-            val resolvedId = resolution.id ?: id
-            traversalResult(patchline, warning, limit) { gt ->
-                if (direction == "callees") gt.findCallees(resolvedId, limit)
-                else gt.findCallers(resolvedId, limit)
+            traversalResult(patchline, warning, limit, seedId = id) { gt, startId ->
+                if (direction == "callees") gt.findCallees(startId, limit)
+                else gt.findCallers(startId, limit)
             }
         }
     }
@@ -1201,7 +1310,7 @@ class HytaleKnowledgeServer(
             val limit = (request.arguments?.getInt("limit") ?: 10).coerceIn(1, 50)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
-            traversalResult(patchline, warning, limit) { gt -> gt.findShopsSellingItem(nodeId, limit) }
+            traversalResult(patchline, warning, limit, seedId = nodeId) { gt, startId -> gt.findShopsSellingItem(startId, limit) }
         }
     }
 
@@ -1224,7 +1333,7 @@ class HytaleKnowledgeServer(
             val limit = (request.arguments?.getInt("limit") ?: 10).coerceIn(1, 50)
             val patchline = request.arguments?.getString("patchline") ?: "release"
             val warning = StringBuilder()
-            traversalResult(patchline, warning, limit) { gt -> gt.findGroupMembers(nodeId, limit) }
+            traversalResult(patchline, warning, limit, seedId = nodeId) { gt, startId -> gt.findGroupMembers(startId, limit) }
         }
     }
 
@@ -1243,7 +1352,8 @@ class HytaleKnowledgeServer(
                     for (patchline in patchlines) {
                         put(patchline, buildJsonArray {
                             for (slug in VersionResolver.listSlugs(basePath, patchline)) {
-                                val meta = VersionResolver.readMeta(File(basePath, "versions/$slug/version_meta.json"))
+                                val dir = VersionResolver.existingVersionDir(basePath, slug) ?: continue
+                                val meta = VersionResolver.readMeta(File(dir, "version_meta.json"))
                                 add(buildJsonObject {
                                     put("slug", slug)
                                     put("branch", meta?.branch)
@@ -1317,12 +1427,23 @@ class HytaleKnowledgeServer(
     private fun resolveSourceFile(sourceRoot: File, raw: String): Result<File> {
         val canonicalRoot = sourceRoot.canonicalFile
         val relative = normalizeSourcePath(raw)
-        val resolved = File(sourceRoot, relative).canonicalFile
+        val requested = File(sourceRoot, relative)
+        var probe: File? = requested
+        while (probe != null) {
+            if (java.nio.file.Files.isSymbolicLink(probe.toPath())) {
+                return Result.failure(IllegalArgumentException("Source path is a symbolic link"))
+            }
+            if (probe.canonicalFile == canonicalRoot) break
+            val parent = probe.parentFile ?: break
+            if (parent.canonicalFile == probe.canonicalFile) break
+            probe = parent
+        }
+        val resolved = requested.canonicalFile
         if (resolved != canonicalRoot && !resolved.path.startsWith(canonicalRoot.path + File.separator)) {
-            return Result.failure(IllegalArgumentException("Path escapes the source tree: $raw"))
+            return Result.failure(IllegalArgumentException("Path escapes the source tree"))
         }
         if (!resolved.isFile) {
-            return Result.failure(IllegalArgumentException("Source file not found: $relative"))
+            return Result.failure(IllegalArgumentException("Source file not found"))
         }
         return Result.success(resolved)
     }
@@ -1379,6 +1500,9 @@ class HytaleKnowledgeServer(
                         }
                     }
                     val match = matches.first()
+                    if (!isAuthorized(Corpus.CODE, normalizeSourcePath(match.owningFile))) {
+                        return@RegisteredTool unauthorizedNode()
+                    }
                     val file = resolveSourceFile(sourceRoot, match.owningFile).getOrElse {
                         return@RegisteredTool errorResult(it.message ?: "Invalid path: ${match.owningFile}")
                     }
@@ -1405,6 +1529,9 @@ class HytaleKnowledgeServer(
                     val files = buildJsonArray {
                         for (element in batch) {
                             val raw = (element as? JsonPrimitive)?.contentOrNull ?: continue
+                            if (!isAuthorized(Corpus.CODE, normalizeSourcePath(raw))) {
+                                return@RegisteredTool unauthorizedNode()
+                            }
                             val file = resolveSourceFile(sourceRoot, raw).getOrElse {
                                 return@RegisteredTool errorResult(it.message ?: "Invalid path: $raw")
                             }
@@ -1429,6 +1556,9 @@ class HytaleKnowledgeServer(
                             ?: return@RegisteredTool errorResult("Could not resolve className '$name' to a source file.")
                     }
                     ?: return@RegisteredTool errorResult("Provide one of 'className', 'path', or 'paths'.")
+                if (!isAuthorized(Corpus.CODE, normalizeSourcePath(raw))) {
+                    return@RegisteredTool unauthorizedNode()
+                }
                 val file = resolveSourceFile(sourceRoot, raw).getOrElse {
                     return@RegisteredTool errorResult(it.message ?: "Invalid path: $raw")
                 }

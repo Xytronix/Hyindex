@@ -16,7 +16,7 @@ import java.nio.file.Files
 class CodeIndexerTest {
     @Test fun `indexes a single decompiled java method into the code corpus`() {
         val base = Files.createTempDirectory("hyindex-code").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Demo.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText("package com.hypixel.hytale;\npublic class Demo { public int add(int a,int b){ return a+b; } }\n")
@@ -35,7 +35,7 @@ class CodeIndexerTest {
 
     @Test fun `both overloads of a method persist as distinct code nodes`() {
         val base = Files.createTempDirectory("hyindex-code-overload").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Over.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText("package com.hypixel.hytale;\npublic class Over { public void add(int a){} public void add(String a){} }\n")
@@ -55,7 +55,7 @@ class CodeIndexerTest {
 
     @Test fun `writes per-method facet metadata json to the node metadata column`() {
         val base = Files.createTempDirectory("hyindex-code-meta").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Demo.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText("package com.hypixel.hytale;\npublic class Demo { public int add(int a,int b){ return wrap(a,b); } }\n")
@@ -77,7 +77,7 @@ class CodeIndexerTest {
 
     @Test fun `indexes an unparseable file as a file-level fallback node`() {
         val base = Files.createTempDirectory("hyindex-code-fallback").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/component/Store.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText("package com.hypixel.hytale.component;\npublic class Store { void broken() { int x = ; } }\n")
@@ -99,7 +99,7 @@ class CodeIndexerTest {
 
     @Test fun `a sealed type emits PERMITS edges to its permitted subtypes`() {
         val base = Files.createTempDirectory("hyindex-permits").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Shape.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText(
@@ -127,7 +127,7 @@ class CodeIndexerTest {
 
     @Test fun `captures sealed and non-sealed modifiers on the class node`() {
         val base = Files.createTempDirectory("hyindex-sealed-mod").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Shape.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText(
@@ -151,7 +151,7 @@ class CodeIndexerTest {
 
     @Test fun `emits an INSTANCEOF edge from a method to the checked type`() {
         val base = Files.createTempDirectory("hyindex-instanceof").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Widget.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText(
@@ -175,7 +175,7 @@ class CodeIndexerTest {
 
     @Test fun `emits DECLARED_IN edges from each method node to its class node`() {
         val base = Files.createTempDirectory("hyindex-declared-in").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Demo.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText("package com.hypixel.hytale;\npublic class Demo { public int add(int a,int b){ return a+b; } public int sub(int a,int b){ return a-b; } }\n")
@@ -198,7 +198,7 @@ class CodeIndexerTest {
 
     @Test fun `nested class relations use the dotted FQN so IMPLEMENTS edges resolve to the class node`() {
         val base = Files.createTempDirectory("hyindex-nested-fqn").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Outer.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText(
@@ -229,7 +229,7 @@ class CodeIndexerTest {
 
     @Test fun `emits no DECLARED_IN edge for a class with no methods`() {
         val base = Files.createTempDirectory("hyindex-declared-in-empty").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Empty.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText("package com.hypixel.hytale;\npublic class Empty { }\n")
@@ -247,7 +247,7 @@ class CodeIndexerTest {
 
     @Test fun `emits a CALLS edge from a calling method to a resolved callee method`() {
         val base = Files.createTempDirectory("hyindex-calls").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val caller = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Caller.java")
         caller.parentFile.mkdirs()
         caller.writeText("package com.hypixel.hytale;\npublic class Caller { void run(){ new Callee().ping(); } }\n")
@@ -272,7 +272,7 @@ class CodeIndexerTest {
 
     @Test fun `unresolved CALLS callee is recorded with target_resolved zero and no crash`() {
         val base = Files.createTempDirectory("hyindex-calls-unresolved").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val caller = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Lonely.java")
         caller.parentFile.mkdirs()
         caller.writeText("package com.hypixel.hytale;\npublic class Lonely { void run(){ new Nowhere().vanish(); } }\n")
@@ -293,7 +293,7 @@ class CodeIndexerTest {
 
     @Test fun `logs a CALLS resolution summary counting method-precise and class-granular edges`() {
         val base = Files.createTempDirectory("hyindex-calls-summary").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val caller = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Caller.java")
         caller.parentFile.mkdirs()
         caller.writeText("package com.hypixel.hytale;\npublic class Caller { void run(){ new Callee().ping(); new Nowhere().vanish(); } }\n")
@@ -321,7 +321,7 @@ class CodeIndexerTest {
 
     @Test fun `force re-chunks unchanged files instead of skipping`() {
         val base = Files.createTempDirectory("hyindex-force").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Demo.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText("package com.hypixel.hytale;\npublic class Demo { public int add(int a,int b){ return a+b; } }\n")
@@ -337,4 +337,5 @@ class CodeIndexerTest {
         assertTrue(forced.indexed >= 1, "force should re-chunk at least one method")
         db.close()
     }
+
 }

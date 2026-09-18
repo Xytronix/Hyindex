@@ -453,7 +453,7 @@ class KnowledgeSearchServiceTest {
     @Test
     fun `maybeRerank returns results unchanged when disabled`() {
         val fake = FakeReranker(listOf(1 to 0.9, 0 to 0.8))
-        val svc = rerankService(KnowledgeConfig(rerankerEnabled = false), fake)
+        val svc = rerankService(KnowledgeConfig(rerankerProfile = null), fake)
         val input = listOf(snippetResult("node:A", 0.9, "a"), snippetResult("node:B", 0.8, "b"))
         val out = svc.maybeRerank("q", input)
         assertEquals(listOf("node:A", "node:B"), out.map { it.nodeId })
@@ -463,7 +463,7 @@ class KnowledgeSearchServiceTest {
     @Test
     fun `maybeRerank reorders per the reranker indices when enabled`() {
         val fake = FakeReranker(listOf(2 to 0.95, 0 to 0.60, 1 to 0.30))
-        val svc = rerankService(KnowledgeConfig(rerankerEnabled = true), fake)
+        val svc = rerankService(KnowledgeConfig(rerankerProfile = com.hyindex.knowledge.core.config.RerankerProfile(provider = "fake", model = "fake", topN = 50)), fake)
         val input = listOf(
             snippetResult("node:A", 0.9, "a"),
             snippetResult("node:B", 0.8, "b"),
@@ -478,7 +478,7 @@ class KnowledgeSearchServiceTest {
     @Test
     fun `maybeRerank returns results unchanged when reranker returns empty`() {
         val fake = FakeReranker(emptyList())
-        val svc = rerankService(KnowledgeConfig(rerankerEnabled = true), fake)
+        val svc = rerankService(KnowledgeConfig(rerankerProfile = com.hyindex.knowledge.core.config.RerankerProfile(provider = "fake", model = "fake", topN = 50)), fake)
         val input = listOf(snippetResult("node:A", 0.9, "a"), snippetResult("node:B", 0.8, "b"))
         val out = svc.maybeRerank("q", input)
         assertEquals(listOf("node:A", "node:B"), out.map { it.nodeId })
@@ -488,7 +488,7 @@ class KnowledgeSearchServiceTest {
     @Test
     fun `maybeRerank returns single result unchanged`() {
         val fake = FakeReranker(listOf(0 to 0.9))
-        val svc = rerankService(KnowledgeConfig(rerankerEnabled = true), fake)
+        val svc = rerankService(KnowledgeConfig(rerankerProfile = com.hyindex.knowledge.core.config.RerankerProfile(provider = "fake", model = "fake", topN = 50)), fake)
         val input = listOf(snippetResult("node:A", 0.9, "a"))
         val out = svc.maybeRerank("q", input)
         assertEquals(listOf("node:A"), out.map { it.nodeId })
@@ -498,7 +498,7 @@ class KnowledgeSearchServiceTest {
     @Test
     fun `maybeRerank reranks only top-N and appends the tail`() {
         val fake = FakeReranker(listOf(1 to 0.9, 0 to 0.7))
-        val config = KnowledgeConfig(rerankerEnabled = true, rerankerTopN = 2)
+        val config = KnowledgeConfig(rerankerProfile = com.hyindex.knowledge.core.config.RerankerProfile(provider = "fake", model = "fake", topN = 2))
         val svc = rerankService(config, fake)
         val input = listOf(
             snippetResult("node:A", 0.9, "a"),
@@ -512,7 +512,7 @@ class KnowledgeSearchServiceTest {
     @Test
     fun `maybeRerank carries real relevance scores while keeping score as the rank ramp`() {
         val fake = FakeReranker(listOf(2 to 0.95, 0 to 0.60, 1 to 0.30))
-        val svc = rerankService(KnowledgeConfig(rerankerEnabled = true), fake)
+        val svc = rerankService(KnowledgeConfig(rerankerProfile = com.hyindex.knowledge.core.config.RerankerProfile(provider = "fake", model = "fake", topN = 50)), fake)
         val input = listOf(
             snippetResult("node:A", 0.9, "a"),
             snippetResult("node:B", 0.8, "b"),
@@ -528,7 +528,7 @@ class KnowledgeSearchServiceTest {
     @Test
     fun `maybeRerank leaves the tail relevanceScore null`() {
         val fake = FakeReranker(listOf(1 to 0.9, 0 to 0.7))
-        val config = KnowledgeConfig(rerankerEnabled = true, rerankerTopN = 2)
+        val config = KnowledgeConfig(rerankerProfile = com.hyindex.knowledge.core.config.RerankerProfile(provider = "fake", model = "fake", topN = 2))
         val svc = rerankService(config, fake)
         val input = listOf(
             snippetResult("node:A", 0.9, "a"),
@@ -544,7 +544,7 @@ class KnowledgeSearchServiceTest {
     @Test
     fun `maybeRerank leaves relevanceScore null when disabled`() {
         val fake = FakeReranker(listOf(1 to 0.9, 0 to 0.8))
-        val svc = rerankService(KnowledgeConfig(rerankerEnabled = false), fake)
+        val svc = rerankService(KnowledgeConfig(rerankerProfile = null), fake)
         val input = listOf(snippetResult("node:A", 0.9, "a"), snippetResult("node:B", 0.8, "b"))
         val out = svc.maybeRerank("q", input)
         assertNull(out[0].relevanceScore)
@@ -554,7 +554,7 @@ class KnowledgeSearchServiceTest {
     @Test
     fun `maybeRerank leaves relevanceScore null when reranker returns empty`() {
         val fake = FakeReranker(emptyList())
-        val svc = rerankService(KnowledgeConfig(rerankerEnabled = true), fake)
+        val svc = rerankService(KnowledgeConfig(rerankerProfile = com.hyindex.knowledge.core.config.RerankerProfile(provider = "fake", model = "fake", topN = 50)), fake)
         val input = listOf(snippetResult("node:A", 0.9, "a"), snippetResult("node:B", 0.8, "b"))
         val out = svc.maybeRerank("q", input)
         assertNull(out[0].relevanceScore)

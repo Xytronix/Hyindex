@@ -4,6 +4,8 @@ package com.hyindex.knowledge.core.search
 import com.hyindex.knowledge.core.db.KnowledgeDatabase
 
 class GraphTraversal(private val db: KnowledgeDatabase) {
+    private fun authorized(results: List<SearchResult>): List<SearchResult> = results
+
 
     fun findByRelation(entityName: String, relation: String, limit: Int = 10): List<SearchResult> {
         val targetResults = db.query(
@@ -31,9 +33,9 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
             )
         }
 
-        if (targetResults.isNotEmpty()) return targetResults
+        if (targetResults.isNotEmpty()) return authorized(targetResults)
 
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.file_path, n.line_start, n.corpus, n.data_type
                FROM edges e
                JOIN nodes n ON n.id = e.target_id
@@ -56,12 +58,12 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 dataType = rs.getString("data_type"),
                 corpus = rs.getString("corpus") ?: "code",
             )
-        }
+        })
     }
 
     fun findCallers(id: String, limit: Int = 10): List<SearchResult> {
         val classMembersLike = if (id.startsWith("class:")) id.substring("class:".length) + "#%" else "NO-MATCH-SENTINEL"
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.file_path, n.line_start
                FROM edges e
                JOIN nodes n ON n.id = e.source_id
@@ -84,11 +86,11 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 source = ResultSource.GRAPH,
                 corpus = "code",
             )
-        }
+        })
     }
 
     fun findCallees(id: String, limit: Int = 10): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT COALESCE(nm.id, nc.id) AS rid,
                       COALESCE(nm.display_name, nc.display_name) AS rname,
                       COALESCE(nm.content, nc.content) AS rcontent,
@@ -115,14 +117,14 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 source = ResultSource.GRAPH,
                 corpus = "code",
             )
-        }
+        })
     }
 
     private fun classForm(id: String): String =
         if (id.startsWith("class:")) id else "class:${id.substringBefore('#')}"
 
     fun findImplementingCode(gamedataNodeId: String, limit: Int = 10): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.file_path, n.line_start
                FROM edges e
                JOIN nodes n ON n.id = e.target_id
@@ -143,11 +145,11 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 source = ResultSource.GRAPH,
                 corpus = "code",
             )
-        }
+        })
     }
 
     fun findGamedataForCode(codeNodeId: String, limit: Int = 5): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.embedding_text,
                       n.file_path, n.line_start, n.data_type
                FROM edges e
@@ -171,11 +173,11 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 dataType = rs.getString("data_type"),
                 corpus = "gamedata",
             )
-        }
+        })
     }
 
     fun findByName(entityName: String, limit: Int = 10): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT id, display_name, content, file_path, line_start, corpus, data_type
                FROM nodes
                WHERE display_name = ? OR display_name LIKE ? OR display_name LIKE ?
@@ -203,7 +205,7 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 dataType = rs.getString("data_type"),
                 corpus = rs.getString("corpus") ?: "code",
             )
-        }
+        })
     }
 
     fun findRecipeInputs(itemNodeId: String, limit: Int = 10): List<SearchResult> {
@@ -253,7 +255,7 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 corpus = "gamedata",
             )
         }
-        return (forward + reverse).distinctBy { it.nodeId }
+        return authorized((forward + reverse).distinctBy { it.nodeId })
     }
 
     fun findRecipeOutputs(itemNodeId: String, limit: Int = 10): List<SearchResult> {
@@ -303,11 +305,11 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 corpus = "gamedata",
             )
         }
-        return (forward + reverse).distinctBy { it.nodeId }
+        return authorized((forward + reverse).distinctBy { it.nodeId })
     }
 
     fun findDropsFrom(entityNodeId: String, limit: Int = 10): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.embedding_text, n.file_path, n.line_start, n.data_type
                FROM edges e1
                JOIN edges e2 ON e2.source_id = e1.target_id AND e2.edge_type = 'DROPS_ITEM'
@@ -330,11 +332,11 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 dataType = rs.getString("data_type"),
                 corpus = "gamedata",
             )
-        }
+        })
     }
 
     fun findShopsSellingItem(itemNodeId: String, limit: Int = 10): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.embedding_text, n.file_path, n.line_start, n.data_type
                FROM edges e
                JOIN nodes n ON n.id = e.source_id
@@ -356,11 +358,11 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 dataType = rs.getString("data_type"),
                 corpus = "gamedata",
             )
-        }
+        })
     }
 
     fun findDocsReferences(docsNodeId: String, limit: Int = 10): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.embedding_text, n.file_path, n.line_start, n.data_type, n.corpus
                FROM edges e
                JOIN nodes n ON n.id = e.target_id
@@ -383,11 +385,11 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 dataType = rs.getString("data_type"),
                 corpus = corpus,
             )
-        }
+        })
     }
 
     fun findUIBindings(clientNodeId: String, limit: Int = 10): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.embedding_text,
                       n.file_path, n.line_start, n.data_type
                FROM edges e
@@ -411,11 +413,11 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 dataType = rs.getString("data_type"),
                 corpus = "gamedata",
             )
-        }
+        })
     }
 
     fun findUIForGamedata(gamedataNodeId: String, limit: Int = 5): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.embedding_text,
                       n.file_path, n.line_start
                FROM edges e
@@ -438,11 +440,11 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 source = ResultSource.GRAPH,
                 corpus = "client",
             )
-        }
+        })
     }
 
     fun findGroupMembers(groupNodeId: String, limit: Int = 10): List<SearchResult> {
-        return db.query(
+        return authorized(db.query(
             """SELECT n.id, n.display_name, n.content, n.embedding_text, n.file_path, n.line_start, n.data_type
                FROM edges e
                JOIN nodes n ON n.id = e.target_id
@@ -464,6 +466,6 @@ class GraphTraversal(private val db: KnowledgeDatabase) {
                 dataType = rs.getString("data_type"),
                 corpus = "gamedata",
             )
-        }
+        })
     }
 }

@@ -16,7 +16,7 @@ fun main() {
 
     log.info("Loading configuration...")
     val config = McpConfig.load()
-    log.info("Embedding provider: ${config.embeddingProvider}")
+    log.info("Embedding profiles: ${config.corpusEmbeddingProfiles.entries.joinToString { "${it.key}:${it.value}" }}")
     val basePath = config.resolvedBasePath()
     log.info("Base path: ${basePath.absolutePath}")
 

@@ -19,7 +19,7 @@ import java.nio.file.Files
 class BuildAllIndexerTest {
     @Test fun `runs all corpora, skips missing local ones, writes version meta`() {
         val base = Files.createTempDirectory("hyindex-all").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Demo.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText("package com.hypixel.hytale; public class Demo { public int x(){return 1;} }")
@@ -43,7 +43,7 @@ class BuildAllIndexerTest {
 
     @Test fun `version_meta json is valid JSON with buildNumber and protocolCrc`() {
         val base = Files.createTempDirectory("hyindex-meta").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_b42_2026-06-23-abc1234")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_b42_2026-06-23-abc1234")
         val log = StdoutLogProvider
         val db = KnowledgeDatabase.forFile(java.io.File(cfg.resolvedIndexPath(), "knowledge.db"), log)
         val cache = EmbeddingCacheService(EmbeddingCacheDatabase.forFile(java.io.File(base, "embedding-cache.db"), log), log)

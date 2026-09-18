@@ -3,9 +3,10 @@ package com.hyindex.knowledge.core.diff
 
 import com.hyindex.knowledge.core.logging.LogProvider
 import com.hyindex.knowledge.core.logging.StdoutLogProvider
+import com.hyindex.knowledge.core.version.VersionResolver
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.nio.file.Paths
+import java.security.MessageDigest
 
 
 class DiffCache(
@@ -54,22 +55,31 @@ class DiffCache(
     }
 
     private fun diffFile(versionA: String, versionB: String): File {
-        val safeName = "${versionA}--${versionB}.diff.json"
-        return File(diffsDir, safeName)
+        val name = "${stableId(versionA)}--${stableId(versionB)}.diff.json"
+        val file = File(diffsDir, name)
+        check(VersionResolver.containedUnder(diffsDir, file)) { "diff cache path escapes diffs root" }
+        return file
+    }
+
+    private fun stableId(version: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(version.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { b -> "%02x".format(b) }.take(32)
     }
 
     private fun versionMetaFile(version: String): File {
-        return Paths.get(basePath.absolutePath, "versions", version, "version_meta.json").toFile()
+        val slug = version.takeIf { VersionResolver.isSafeToken(it) } ?: return File(basePath, "versions/.invalid/version_meta.json")
+        return File(File(File(basePath, "versions"), slug), "version_meta.json")
     }
 
     private fun versionDbFile(version: String): File {
-        return Paths.get(basePath.absolutePath, "versions", version, "knowledge.db").toFile()
+        return VersionResolver.existingKnowledgeDb(basePath, version)
+            ?: File(basePath, "versions/.invalid/knowledge.db")
     }
 
     companion object {
         fun forDefaultPath(): DiffCache {
             val home = System.getProperty("user.home")
-            return DiffCache(Paths.get(home, ".hyindex", "knowledge").toFile())
+            return DiffCache(File(File(home, ".hyindex"), "knowledge"))
         }
     }
 }

@@ -1,20 +1,43 @@
 // Copyright 2026 Hyindex. All rights reserved.
 package com.hyindex.knowledge.core.config
 
+import com.hyindex.knowledge.core.db.Corpus
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.nio.file.Paths
 
-data class KnowledgeConfig(
-    val embeddingProvider: String = "openai",
-    val embeddingBaseUrl: String = "",
-    val embeddingApiKey: String = "",
-    val embeddingCodeModel: String = "text-embedding-3-large",
-    val embeddingTextModel: String = "text-embedding-3-large",
-    val embeddingDimensions: Int? = null,
+private const val DEFAULT_EMBEDDING_CONCURRENCY = 4
 
-    val embeddingConcurrency: Int = 4,
+private val DEFAULT_EMBEDDING_PROFILES = mapOf(
+    "code" to EmbeddingProfile(
+        provider = "openai",
+        baseUrl = "https://api.openai.com",
+        documentModel = "text-embedding-3-large",
+        dimensions = 3072,
+        concurrency = DEFAULT_EMBEDDING_CONCURRENCY,
+    ),
+    "text" to EmbeddingProfile(
+        provider = "openai",
+        baseUrl = "https://api.openai.com",
+        documentModel = "text-embedding-3-large",
+        dimensions = 3072,
+        concurrency = DEFAULT_EMBEDDING_CONCURRENCY,
+    ),
+)
+
+private val DEFAULT_CORPUS_EMBEDDING_PROFILES = mapOf(
+    Corpus.CODE.id to "code",
+    Corpus.DOCS.id to "text",
+    Corpus.GAMEDATA.id to "text",
+    Corpus.CLIENT.id to "text",
+)
+
+data class KnowledgeConfig(
+    val embeddingProfiles: Map<String, EmbeddingProfile> = DEFAULT_EMBEDDING_PROFILES,
+    val corpusEmbeddingProfiles: Map<String, String> = DEFAULT_CORPUS_EMBEDDING_PROFILES,
+    val visualRasterRoot: String = "",
+
     val indexPath: String = "",
     val resultsPerCorpus: Int = 10,
     val maxRelatedConnections: Int = 5,
@@ -28,7 +51,6 @@ data class KnowledgeConfig(
     val sourceMaxChars: Int = 20000,
     val retentionCount: Int = 0,
     val gitToken: String? = null,
-    val gitRepoUrl: String = "https://github.com/HypixelStudios/hytale-shared-source.git",
 
     val blogScorePenalty: Double = 0.85,
     val gamedataUnintentScoreFloor: Double = 0.70,
@@ -37,12 +59,26 @@ data class KnowledgeConfig(
     val minExpansionResultScore: Double = 0.35,
     val perSeedExpansionCap: Int = 3,
     val gamedataWorldNodePenalty: Double = 0.5,
-    val gamedataWorldNodeTypes: List<String> = listOf("cave", "prefab", "zone", "worldgen", "instance", "terrain_layer", "environment", "biome"),
+    val gamedataWorldNodeTypes: List<String> = listOf(
+        "cave",
+        "prefab",
+        "zone",
+        "worldgen",
+        "instance",
+        "terrain_layer",
+        "environment",
+        "biome",
+    ),
     val gamedataFetchLimit: Int = 200,
 
-    val rerankerEnabled: Boolean = false,
-    val rerankerModel: String = "rerank-2.5",
-    val rerankerTopN: Int = 50,
+    val rerankerProfile: RerankerProfile? = null,
+
+    val jevRoutingEnabled: Boolean = false,
+    val jevApiKey: String = "",
+    val jevModel: String = "jev-latest",
+    val jevBaseUrl: String = "https://api.typesafe.ai",
+    val jevCorpusThreshold: Double = 0.20,
+    val routedCandidatesPerCorpus: Int = 15,
 
     val hybridEnabled: Boolean = true,
     val hybridRrfK: Int = 60,
@@ -55,6 +91,41 @@ data class KnowledgeConfig(
 
     val delegatePenalty: Double = 1.0,
 ) {
+    fun resolvedEmbeddingProfile(corpus: Corpus): ResolvedEmbeddingProfile {
+        val profileName = corpusEmbeddingProfiles[corpus.id]
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: throw IllegalArgumentException("Corpus '${corpus.id}' has no embedding profile assignment")
+        val profile = embeddingProfiles[profileName]
+            ?: throw IllegalArgumentException(
+                "Corpus '${corpus.id}' references missing embedding profile '$profileName'",
+            )
+        require(profile.provider.isNotBlank()) { "Embedding profile '$profileName' has no provider" }
+        require(profile.documentModel.isNotBlank()) { "Embedding profile '$profileName' has no documentModel" }
+        require(profile.dimensions == null || profile.dimensions > 0) {
+            "Embedding profile '$profileName' dimensions must be positive"
+        }
+        return ResolvedEmbeddingProfile(
+            name = profileName,
+            provider = profile.provider,
+            baseUrl = profile.baseUrl,
+            apiKey = profile.apiKey,
+            documentModel = profile.documentModel,
+            queryModel = profile.queryModel?.takeIf { it.isNotBlank() } ?: profile.documentModel,
+            dimensions = profile.dimensions,
+            concurrency = profile.concurrency?.takeIf { it > 0 } ?: DEFAULT_EMBEDDING_CONCURRENCY,
+        )
+    }
+
+    fun resolvedDocumentModel(corpus: Corpus): String =
+        resolvedEmbeddingProfile(corpus).documentModel
+
+    fun resolvedQueryModel(corpus: Corpus): String =
+        resolvedEmbeddingProfile(corpus).queryModel
+
+    fun resolvedDimensions(corpus: Corpus): Int? =
+        resolvedEmbeddingProfile(corpus).dimensions
+
     fun resolvedIndexPath(): File {
         val base = if (indexPath.isNotBlank()) File(indexPath) else defaultBasePath()
         if (activeVersion.isNotBlank()) return File(base, "versions/$activeVersion")
@@ -81,13 +152,9 @@ data class KnowledgeConfig(
 
         fun writeToFile(config: KnowledgeConfig, file: File = configFilePath()) {
             val fileConfig = FileConfig(
-                embeddingProvider = config.embeddingProvider,
-                embeddingBaseUrl = config.embeddingBaseUrl,
-                embeddingApiKey = config.embeddingApiKey,
-                embeddingCodeModel = config.embeddingCodeModel,
-                embeddingTextModel = config.embeddingTextModel,
-                embeddingDimensions = config.embeddingDimensions,
-                embeddingConcurrency = config.embeddingConcurrency,
+                embeddingProfiles = config.embeddingProfiles,
+                corpusEmbeddingProfiles = config.corpusEmbeddingProfiles,
+                visualRasterRoot = config.visualRasterRoot.takeIf { it.isNotBlank() },
                 indexPath = config.indexPath,
                 resultsPerCorpus = config.resultsPerCorpus,
                 maxRelatedConnections = config.maxRelatedConnections,
@@ -100,7 +167,6 @@ data class KnowledgeConfig(
                 sourceMaxChars = config.sourceMaxChars,
                 retentionCount = config.retentionCount.takeIf { it != 0 },
                 gitToken = config.gitToken,
-                gitRepoUrl = config.gitRepoUrl,
                 blogScorePenalty = config.blogScorePenalty,
                 gamedataUnintentScoreFloor = config.gamedataUnintentScoreFloor,
                 expansionDiscount = config.expansionDiscount,
@@ -110,9 +176,13 @@ data class KnowledgeConfig(
                 gamedataWorldNodePenalty = config.gamedataWorldNodePenalty,
                 gamedataWorldNodeTypes = config.gamedataWorldNodeTypes,
                 gamedataFetchLimit = config.gamedataFetchLimit,
-                rerankerEnabled = config.rerankerEnabled,
-                rerankerModel = config.rerankerModel,
-                rerankerTopN = config.rerankerTopN,
+                rerankerProfile = config.rerankerProfile,
+                jevRoutingEnabled = config.jevRoutingEnabled,
+                jevApiKey = config.jevApiKey,
+                jevModel = config.jevModel,
+                jevBaseUrl = config.jevBaseUrl,
+                jevCorpusThreshold = config.jevCorpusThreshold,
+                routedCandidatesPerCorpus = config.routedCandidatesPerCorpus,
                 hybridEnabled = config.hybridEnabled,
                 hybridRrfK = config.hybridRrfK,
                 hybridLexicalLimit = config.hybridLexicalLimit,
@@ -132,13 +202,9 @@ data class KnowledgeConfig(
                 val fc = json.decodeFromString(FileConfig.serializer(), file.readText())
                 val defaults = KnowledgeConfig()
                 KnowledgeConfig(
-                    embeddingProvider = fc.embeddingProvider ?: defaults.embeddingProvider,
-                    embeddingBaseUrl = fc.embeddingBaseUrl ?: defaults.embeddingBaseUrl,
-                    embeddingApiKey = fc.embeddingApiKey ?: defaults.embeddingApiKey,
-                    embeddingCodeModel = fc.embeddingCodeModel ?: defaults.embeddingCodeModel,
-                    embeddingTextModel = fc.embeddingTextModel ?: defaults.embeddingTextModel,
-                    embeddingDimensions = fc.embeddingDimensions ?: defaults.embeddingDimensions,
-                    embeddingConcurrency = fc.embeddingConcurrency ?: defaults.embeddingConcurrency,
+                    embeddingProfiles = fc.embeddingProfiles ?: defaults.embeddingProfiles,
+                    corpusEmbeddingProfiles = fc.corpusEmbeddingProfiles ?: defaults.corpusEmbeddingProfiles,
+                    visualRasterRoot = fc.visualRasterRoot ?: defaults.visualRasterRoot,
                     indexPath = fc.indexPath ?: defaults.indexPath,
                     resultsPerCorpus = fc.resultsPerCorpus ?: defaults.resultsPerCorpus,
                     maxRelatedConnections = fc.maxRelatedConnections ?: defaults.maxRelatedConnections,
@@ -151,7 +217,6 @@ data class KnowledgeConfig(
                     sourceMaxChars = fc.sourceMaxChars ?: defaults.sourceMaxChars,
                     retentionCount = fc.retentionCount ?: defaults.retentionCount,
                     gitToken = fc.gitToken ?: defaults.gitToken,
-                    gitRepoUrl = fc.gitRepoUrl ?: defaults.gitRepoUrl,
                     blogScorePenalty = fc.blogScorePenalty ?: defaults.blogScorePenalty,
                     gamedataUnintentScoreFloor = fc.gamedataUnintentScoreFloor ?: defaults.gamedataUnintentScoreFloor,
                     expansionDiscount = fc.expansionDiscount ?: defaults.expansionDiscount,
@@ -161,9 +226,13 @@ data class KnowledgeConfig(
                     gamedataWorldNodePenalty = fc.gamedataWorldNodePenalty ?: defaults.gamedataWorldNodePenalty,
                     gamedataWorldNodeTypes = fc.gamedataWorldNodeTypes ?: defaults.gamedataWorldNodeTypes,
                     gamedataFetchLimit = fc.gamedataFetchLimit ?: defaults.gamedataFetchLimit,
-                    rerankerEnabled = fc.rerankerEnabled ?: defaults.rerankerEnabled,
-                    rerankerModel = fc.rerankerModel ?: defaults.rerankerModel,
-                    rerankerTopN = fc.rerankerTopN ?: defaults.rerankerTopN,
+                    rerankerProfile = fc.rerankerProfile ?: defaults.rerankerProfile,
+                    jevRoutingEnabled = fc.jevRoutingEnabled ?: defaults.jevRoutingEnabled,
+                    jevApiKey = fc.jevApiKey ?: defaults.jevApiKey,
+                    jevModel = fc.jevModel ?: defaults.jevModel,
+                    jevBaseUrl = fc.jevBaseUrl ?: defaults.jevBaseUrl,
+                    jevCorpusThreshold = fc.jevCorpusThreshold ?: defaults.jevCorpusThreshold,
+                    routedCandidatesPerCorpus = fc.routedCandidatesPerCorpus ?: defaults.routedCandidatesPerCorpus,
                     hybridEnabled = fc.hybridEnabled ?: defaults.hybridEnabled,
                     hybridRrfK = fc.hybridRrfK ?: defaults.hybridRrfK,
                     hybridLexicalLimit = fc.hybridLexicalLimit ?: defaults.hybridLexicalLimit,
@@ -181,13 +250,9 @@ data class KnowledgeConfig(
 
     @Serializable
     internal data class FileConfig(
-        val embeddingProvider: String? = null,
-        val embeddingBaseUrl: String? = null,
-        val embeddingApiKey: String? = null,
-        val embeddingCodeModel: String? = null,
-        val embeddingTextModel: String? = null,
-        val embeddingDimensions: Int? = null,
-        val embeddingConcurrency: Int? = null,
+        val embeddingProfiles: Map<String, EmbeddingProfile>? = null,
+        val corpusEmbeddingProfiles: Map<String, String>? = null,
+        val visualRasterRoot: String? = null,
         val indexPath: String? = null,
         val resultsPerCorpus: Int? = null,
         val maxRelatedConnections: Int? = null,
@@ -200,7 +265,6 @@ data class KnowledgeConfig(
         val sourceMaxChars: Int? = null,
         val retentionCount: Int? = null,
         val gitToken: String? = null,
-        val gitRepoUrl: String? = null,
         val blogScorePenalty: Double? = null,
         val gamedataUnintentScoreFloor: Double? = null,
         val expansionDiscount: Double? = null,
@@ -210,9 +274,13 @@ data class KnowledgeConfig(
         val gamedataWorldNodePenalty: Double? = null,
         val gamedataWorldNodeTypes: List<String>? = null,
         val gamedataFetchLimit: Int? = null,
-        val rerankerEnabled: Boolean? = null,
-        val rerankerModel: String? = null,
-        val rerankerTopN: Int? = null,
+        val rerankerProfile: RerankerProfile? = null,
+        val jevRoutingEnabled: Boolean? = null,
+        val jevApiKey: String? = null,
+        val jevModel: String? = null,
+        val jevBaseUrl: String? = null,
+        val jevCorpusThreshold: Double? = null,
+        val routedCandidatesPerCorpus: Int? = null,
         val hybridEnabled: Boolean? = null,
         val hybridRrfK: Int? = null,
         val hybridLexicalLimit: Int? = null,

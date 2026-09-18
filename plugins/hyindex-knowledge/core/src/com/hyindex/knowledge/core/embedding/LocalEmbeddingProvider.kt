@@ -57,9 +57,9 @@ class LocalEmbeddingProvider(
         fun ensurePluginPresent() {
             if (!pluginAvailable()) {
                 throw IllegalStateException(
-                    "embeddingProvider=local requires hyindex-embeddings-local.jar on the classpath. " +
-                        "Build it with: ./gradlew :embeddings-local:shadowJar " +
-                        "Or use embeddingProvider=openai / voyage / cohere / gemini / jina / mistral / mixedbread / ollama instead.",
+                    "A profile with provider=local requires hyindex-embeddings-local.jar on the classpath. " +
+                        "Build it with: ./gradlew :embeddings-local:shadowJar, " +
+                        "or configure another embedding profile provider.",
                 )
             }
         }

@@ -1,3 +1,4 @@
+// Copyright 2026 Hyindex. All rights reserved.
 package com.hyindex.knowledge.cli
 
 import org.junit.jupiter.api.Assertions.assertEquals

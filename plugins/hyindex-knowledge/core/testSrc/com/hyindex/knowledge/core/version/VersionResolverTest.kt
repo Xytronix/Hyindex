@@ -84,4 +84,25 @@ class VersionResolverTest {
         assertThat(VersionResolver.resolveSlug(base, "release", "b117")).isNull()
         base.deleteRecursively()
     }
+
+    @Test
+    fun `rejects traversal absolute and separator version refs`() {
+        val base = Files.createTempDirectory("kn-sec").toFile()
+        ver(base, "release_b100_2026-06-20-aaa", "release", 100, "2026-06-20")
+        val outside = Files.createTempDirectory("outside").toFile()
+        File(outside, "secret.db").writeText("no")
+        assertThat(VersionResolver.isSafeToken("../release")).isFalse()
+        assertThat(VersionResolver.isSafeToken("/tmp/x")).isFalse()
+        assertThat(VersionResolver.isSafeToken("foo/bar")).isFalse()
+        assertThat(VersionResolver.isSafeToken("foo\\bar")).isFalse()
+        assertThat(VersionResolver.resolveSlug(base, "release", "../etc")).isNull()
+        assertThat(VersionResolver.resolveSlug(base, "../release", "b100")).isNull()
+        assertThat(VersionResolver.existingKnowledgeDb(base, "../release_b100_2026-06-20-aaa")).isNull()
+        assertThat(VersionResolver.existingKnowledgeDb(base, outside.absolutePath)).isNull()
+        assertThat(VersionResolver.resolveCliSlug(base, "../release")).isNull()
+        assertThat(VersionResolver.resolveCliSlug(base, "release")).isEqualTo("release_b100_2026-06-20-aaa")
+        assertThat(VersionResolver.resolveCliSlug(base, "release_b100_2026-06-20-aaa")).isEqualTo("release_b100_2026-06-20-aaa")
+        base.deleteRecursively()
+        outside.deleteRecursively()
+    }
 }

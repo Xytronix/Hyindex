@@ -4,12 +4,15 @@ package com.hyindex.knowledge.core.search
 import com.hyindex.knowledge.core.config.KnowledgeConfig
 import com.hyindex.knowledge.core.db.Corpus
 import com.hyindex.knowledge.core.db.KnowledgeDatabase
+import com.hyindex.knowledge.core.embedding.EmbeddingCompatibility
+import com.hyindex.knowledge.core.embedding.EmbeddingException
 import com.hyindex.knowledge.core.embedding.Reranker
-import com.hyindex.knowledge.core.embedding.VoyageReranker
+import com.hyindex.knowledge.core.embedding.RerankerFactory
 import com.hyindex.knowledge.core.index.CorpusIndexManager
 import com.hyindex.knowledge.core.logging.LogProvider
 import com.hyindex.knowledge.core.logging.StdoutLogProvider
 import kotlinx.coroutines.runBlocking
+
 
 class KnowledgeSearchService(
     private var db: KnowledgeDatabase,
@@ -17,22 +20,60 @@ class KnowledgeSearchService(
     private val log: LogProvider = StdoutLogProvider,
     private val config: KnowledgeConfig = KnowledgeConfig(),
     reranker: Reranker? = null,
+    corpusRouter: CorpusRouter? = null,
 ) {
 
-    private val reranker: Reranker? = reranker ?: if (config.rerankerEnabled) {
-        VoyageReranker(config.embeddingApiKey, config.rerankerModel, log, config.embeddingBaseUrl)
+    private val rerankerProfile = config.rerankerProfile
+    private val reranker: Reranker? = reranker ?: rerankerProfile?.let {
+        RerankerFactory.fromProfile(it, log)
+    }
+    private val rerankerTopN = rerankerProfile?.topN ?: 50
+
+    private val corpusRouter: CorpusRouter? = corpusRouter ?: if (config.jevRoutingEnabled) {
+        val apiKey = config.jevApiKey.ifBlank { System.getenv("TYPESAFE_API_KEY").orEmpty() }
+        if (apiKey.isBlank()) {
+            log.warn("Jev corpus routing is enabled but no API key is configured")
+            null
+        } else {
+            JevCorpusRouter(
+                apiKey = apiKey,
+                model = config.jevModel,
+                baseUrl = config.jevBaseUrl,
+                threshold = config.jevCorpusThreshold,
+                log = log,
+            )
+        }
     } else null
 
-    internal fun maybeRerank(query: String, results: List<SearchResult>): List<SearchResult> {
-        val active = reranker ?: return results
-        if (!config.rerankerEnabled || results.size < 2) return results
+    internal fun authorizeCorpora(requested: List<Corpus>): List<Corpus> = requested.distinct()
 
-        val candidateCount = minOf(config.rerankerTopN, results.size)
-        val candidates = results.take(candidateCount)
-        val tail = results.drop(candidateCount)
+    internal fun isAuthorized(corpus: Corpus, relativePath: String): Boolean = true
 
-        val order = active.rerank(query, candidates.map { it.snippet })
-        if (order.isEmpty()) return results
+    internal fun isAuthorized(result: SearchResult): Boolean =
+        Corpus.entries.any { it.id.equals(result.corpus, ignoreCase = true) }
+
+    internal fun isAuthorized(corpusId: String?, relativePath: String): Boolean =
+        Corpus.entries.any { it.id.equals(corpusId, ignoreCase = true) }
+
+    internal fun filterAuthorized(results: List<SearchResult>): List<SearchResult> =
+        results.filter(::isAuthorized)
+
+    internal fun maybeRerank(query: String, results: List<SearchResult>, intent: String? = null): List<SearchResult> {
+        val authorized = filterAuthorized(results)
+        val active = reranker ?: return authorized
+        if (rerankerProfile == null || authorized.size < 2) return authorized
+
+        val candidateCount = minOf(rerankerTopN, authorized.size)
+        val candidates = authorized.take(candidateCount)
+        val tail = authorized.drop(candidateCount)
+
+        val rerankQuery = rerankInstruction(intent)?.let { "$query\n\nIntent: $intent. $it" } ?: query
+        val substantiveContent = rerankContentFor(candidates)
+        val order = active.rerank(
+            rerankQuery,
+            candidates.map { rerankDocument(it, substantiveContent[it.nodeId]) },
+        )
+        if (order.isEmpty()) return authorized
 
         val reordered = order.mapIndexedNotNull { position, (index, relevance) ->
             candidates.getOrNull(index)?.copy(
@@ -42,6 +83,49 @@ class KnowledgeSearchService(
         }
         return reordered + tail
     }
+
+    internal fun requireCompatibleQueryEmbeddings(corpus: Corpus) {
+        indexManager.requireCompatibleQueryDimensions(corpus)
+        val stored = loadQueryProvenance(corpus) ?: return
+        val profile = config.resolvedEmbeddingProfile(corpus)
+        val queryFamily = EmbeddingCompatibility.family(profile.queryModel)
+        if (!profile.provider.equals(stored.provider, ignoreCase = true) || queryFamily != stored.family) {
+            throw EmbeddingException.IncompatibleFamily(
+                "${stored.provider}:${stored.family}",
+                "${profile.provider}:${profile.queryModel}",
+            )
+        }
+        val queryDimension = indexManager.getQueryProvider(corpus).dimension
+        if (queryDimension != stored.dimensions) {
+            throw EmbeddingException.DimensionMismatch(stored.dimensions, queryDimension)
+        }
+    }
+
+    private data class StoredQueryProvenance(
+        val provider: String,
+        val family: String,
+        val dimensions: Int,
+    )
+
+    private fun loadQueryProvenance(corpus: Corpus): StoredQueryProvenance? {
+        return try {
+            db.query(
+                "SELECT provider, query_compatible_family, dimensions FROM corpus_provenance WHERE corpus = ?",
+                corpus.id,
+            ) { rs ->
+                StoredQueryProvenance(
+                    provider = rs.getString("provider").orEmpty(),
+                    family = rs.getString("query_compatible_family").orEmpty(),
+                    dimensions = rs.getInt("dimensions"),
+                )
+            }.firstOrNull { it.provider.isNotEmpty() && it.family.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+
+
 
 
     fun reinitialize(newDb: KnowledgeDatabase, newIndexManager: CorpusIndexManager) {
@@ -101,8 +185,8 @@ class KnowledgeSearchService(
             else result.filePath.contains(pathPrefix!!, ignoreCase = true) ||
                 result.nodeId.contains(pathPrefix, ignoreCase = true)
         }
-        val filtered = filterByFacets(pathFiltered, visibility, annotation)
-        val ranked = if (rerank && config.rerankerEnabled) maybeRerank(query, filtered) else filtered
+        val filtered = filterAuthorized(filterByFacets(pathFiltered, visibility, annotation))
+        val ranked = if (rerank && rerankerProfile != null) maybeRerank(query, filtered) else filtered
         return diversifyResults(ranked).take(limit)
     }
 
@@ -170,7 +254,7 @@ class KnowledgeSearchService(
     fun searchByName(name: String, limit: Int = 10): List<SearchResult> {
         val q = name.trim()
         if (q.isEmpty()) return emptyList()
-        return db.query(
+        return filterAuthorized(db.query(
             """SELECT id, display_name, content, file_path, line_start, metadata
                FROM nodes
                WHERE corpus = 'code' AND (display_name = ? OR display_name LIKE ?)
@@ -187,7 +271,7 @@ class KnowledgeSearchService(
                 score = 1.0,
                 source = ResultSource.LEXICAL,
             )
-        }
+        })
     }
 
     internal fun metadataIsThin(metadata: String?): Boolean {
@@ -197,7 +281,8 @@ class KnowledgeSearchService(
 
     fun vectorSearch(query: String, db: KnowledgeDatabase, limit: Int): List<SearchResult> {
         val hnsw = indexManager.getIndex(Corpus.CODE) ?: return emptyList()
-        val provider = indexManager.getProvider(Corpus.CODE)
+        val provider = indexManager.getQueryProvider(Corpus.CODE)
+        requireCompatibleQueryEmbeddings(Corpus.CODE)
 
         val queryVec = runBlocking { provider.embedQuery(query) }
         val results = hnsw.query(queryVec, limit)
@@ -244,7 +329,8 @@ class KnowledgeSearchService(
         if (corpus == Corpus.CODE) return searchCode(query, dataTypeFilters?.firstOrNull(), limit, rerank)
 
         val hnsw = indexManager.getIndex(corpus) ?: return emptyList()
-        val provider = indexManager.getProvider(corpus)
+        val provider = indexManager.getQueryProvider(corpus)
+        requireCompatibleQueryEmbeddings(corpus)
 
         val recency = sort.equals("recency", ignoreCase = true)
         val queryVec = runBlocking { provider.embedQuery(query) }
@@ -258,14 +344,14 @@ class KnowledgeSearchService(
         val fused = if (config.hybridEnabled) {
             rrfFuse(listOf(mapped, lexicalSearch(query, corpus, config.hybridLexicalLimit)), config.hybridRrfK)
         } else mapped
-
         val adjusted = applyCorpusPenalty(fused, corpus)
         val typeFiltered = filterByDataTypes(adjusted, dataTypeFilters)
-        val filtered = filterBySnippet(typeFiltered, snippetContains)
-        val ranked = if (rerank && config.rerankerEnabled) maybeRerank(query, filtered) else filtered
+        val filtered = filterAuthorized(filterBySnippet(typeFiltered, snippetContains))
+        val ranked = if (rerank && rerankerProfile != null) maybeRerank(query, filtered) else filtered
         val sorted = if (recency) sortByRecency(ranked) else ranked
         return sorted.take(limit)
     }
+
 
     internal fun sanitizeFtsQuery(query: String): String {
         val terms = Regex("[A-Za-z0-9]+").findAll(query).map { it.value }.toList()
@@ -304,7 +390,7 @@ class KnowledgeSearchService(
                     dataType = rs.getString("data_type"),
                     corpus = corpus.id,
                 )
-            }
+            }.let { filterAuthorized(it) }
         } catch (e: Exception) {
             log.warn("Lexical FTS search failed for corpus ${corpus.id}; falling back to vector-only: ${e.message}")
             emptyList()
@@ -356,17 +442,99 @@ class KnowledgeSearchService(
         }
 
 
+    fun searchAcrossCorpora(
+        query: String,
+        corpora: List<Corpus>,
+        perCorpus: Int = 10,
+    ): List<SearchResult> {
+        if (query.isBlank()) return emptyList()
+        val requested = authorizeCorpora(corpora)
+        if (requested.isEmpty()) return emptyList()
+        val route = try {
+            corpusRouter?.route(query, requested)
+        } catch (e: Exception) {
+            log.warn("Corpus routing failed: ${e.message}")
+            null
+        }
+        val selectedCorpora = authorizeCorpora(route?.corpora.orEmpty()).ifEmpty { requested }
+        val budgets = candidateBudgets(selectedCorpora, route, perCorpus)
+        if (route != null) {
+            log.info("Jev route: intent=${route.intent}, corpora=${selectedCorpora.joinToString { it.id }}")
+        }
+        val candidates = mutableListOf<SearchResult>()
+        var remainingCapacity = if (route == null) Int.MAX_VALUE else rerankerTopN
+        for ((corpus, budget) in budgets) {
+            val requestLimit = minOf(budget, remainingCapacity)
+            if (requestLimit <= 0) continue
+            val found = try {
+                searchCorpus(query, corpus, requestLimit, rerank = false)
+            } catch (e: Exception) {
+                log.warn("Search failed for corpus ${corpus.id}: ${e.message}")
+                emptyList()
+            }
+            candidates += found
+            if (remainingCapacity != Int.MAX_VALUE) remainingCapacity -= found.size
+        }
+        if (route != null && remainingCapacity > 0) {
+            for ((corpus, budget) in budgets) {
+                if (budget > 0 || remainingCapacity <= 0) continue
+                val found = try {
+                    searchCorpus(query, corpus, minOf(15, remainingCapacity), rerank = false)
+                } catch (e: Exception) {
+                    log.warn("Search failed for fallback corpus ${corpus.id}: ${e.message}")
+                    emptyList()
+                }
+                candidates += found
+                remainingCapacity -= found.size
+            }
+        }
+        val ranked = maybeRerank(query, rankCrossCorpus(candidates), route?.intent)
+        if (!needsBroaden(ranked, route)) {
+            return diversifyBySource(ranked).take(perCorpus)
+        }
+
+        val primary = budgets.maxByOrNull { it.value }?.key
+        val existingIds = candidates.mapTo(mutableSetOf()) { it.nodeId }
+        val widened = selectedCorpora.flatMap { corpus ->
+            val widerBudget = if (corpus == primary) 45 else 15
+            try {
+                searchCorpus(query, corpus, widerBudget, rerank = false)
+                    .filter { existingIds.add(it.nodeId) }
+            } catch (e: Exception) {
+                log.warn("Adaptive search failed for corpus ${corpus.id}: ${e.message}")
+                emptyList()
+            }
+        }
+        val omitted = requested.filter { it !in selectedCorpora }.flatMap { corpus ->
+            try {
+                searchCorpus(query, corpus, 10, rerank = false)
+                    .filter { existingIds.add(it.nodeId) }
+            } catch (e: Exception) {
+                log.warn("Adaptive search failed for omitted corpus ${corpus.id}: ${e.message}")
+                emptyList()
+            }
+        }
+        val expanded = expandCrossCorpus(ranked, selectedCorpora, perCorpus)
+            .filter { it.score >= config.minExpansionResultScore }
+        val broadened = maybeRerank(
+            query,
+            rankCrossCorpus(candidates + widened + omitted + expanded),
+            route?.intent,
+        )
+        return diversifyBySource(broadened).take(perCorpus)
+    }
+
+
     fun searchWithExpansion(
         query: String,
         corpora: List<Corpus>,
         perCorpus: Int = 10,
         expansionLimit: Int = 5,
     ): List<SearchResult> {
+        val authorizedCorpora = authorizeCorpora(corpora)
         val gamedataTypeHint = detectGamedataIntent(query)
-        val directResults = corpora.flatMap { corpus ->
+        val directResults = authorizedCorpora.flatMap { corpus ->
             try {
-
-
                 val results = if (corpus == Corpus.CODE) {
                     vectorSearch(query, db, perCorpus)
                 } else {
@@ -384,24 +552,31 @@ class KnowledgeSearchService(
             }
         }
 
-        val expanded = expandCrossCorpus(directResults, corpora, expansionLimit)
+        val firstPass = maybeRerank(query, rankCrossCorpus(directResults))
+        if (!needsBroaden(firstPass)) {
+            return diversifyBySource(firstPass)
+        }
+
+        val expanded = expandCrossCorpus(firstPass, authorizedCorpora, expansionLimit)
             .filter { it.score >= config.minExpansionResultScore }
         log.info("Graph expansion: ${directResults.size} direct → ${expanded.size} expanded results")
 
-        val seedToExpanded = expanded.groupBy { it.expandedFromNodeId ?: "" }
-            .filterKeys { it.isNotEmpty() }
+        val seedToExpanded = expanded.groupBy { it.expandedFromNodeId ?: "" }.filterKeys { it.isNotEmpty() }
             .mapValues { (_, results) -> results.map { it.nodeId } }
 
-        val annotatedDirect = directResults.map { result ->
+        val annotatedDirect = firstPass.map { result ->
             val connections = seedToExpanded[result.nodeId]
-            if (connections != null) result.copy(connectedNodeIds = connections)
-            else result
+            if (connections != null) result.copy(connectedNodeIds = connections) else result
         }
 
-        return maybeRerank(query, rankCrossCorpus(annotatedDirect + expanded))
+        return diversifyBySource(maybeRerank(query, rankCrossCorpus(annotatedDirect + expanded)))
     }
 
+
     private companion object {
+        private val RERANK_BOILERPLATE = Regex(
+            "(?im)^(?:Hytale Modding Docs:|Type:|// Package:|// Class:|Purpose:|Corpus:).*\\R?",
+        )
         private val GAMEDATA_INTENT_RULES = listOf(
             Regex("\\b(craft|recipe|crafting|bench|smelt|cook|brew)s?\\b", RegexOption.IGNORE_CASE) to setOf("recipe", "item"),
             Regex("\\b(drop|loot)s?\\s+from\\b", RegexOption.IGNORE_CASE) to setOf("drop", "npc"),
@@ -414,6 +589,7 @@ class KnowledgeSearchService(
             Regex("\\b(objective|quest|mission|task|bount(?:y|ies))s?\\b", RegexOption.IGNORE_CASE) to setOf("objective"),
         )
     }
+
 
     internal fun detectGamedataIntent(query: String): Set<String>? {
         val matched = mutableSetOf<String>()
@@ -532,7 +708,7 @@ class KnowledgeSearchService(
         if (expanded.isNotEmpty()) {
             log.info("Graph expansion found ${expanded.size} cross-corpus results from ${seen.size} seeds")
         }
-        return expanded
+        return filterAuthorized(expanded)
     }
 
     internal fun deduplicateResults(results: List<SearchResult>): List<SearchResult> {
@@ -563,6 +739,122 @@ class KnowledgeSearchService(
 
     internal fun rankCrossCorpus(results: List<SearchResult>): List<SearchResult> =
         diversifyResults(deduplicateResults(results).sortedByDescending { it.score })
+
+    internal fun diversifyBySource(results: List<SearchResult>): List<SearchResult> {
+        val authorized = filterAuthorized(results)
+        val seen = mutableMapOf<String, Int>()
+        val out = ArrayList<SearchResult>(authorized.size)
+        for (result in authorized) {
+            val cap = if (result.corpus == "code") 2 else 1
+            val source = result.filePath.ifBlank {
+                result.nodeId.substringBefore('#').substringBeforeLast(':', result.nodeId)
+            }
+            val key = "${result.corpus}\u0000$source"
+            val used = seen[key] ?: 0
+            if (used >= cap) continue
+            seen[key] = used + 1
+            out.add(result)
+        }
+        return out
+    }
+
+    internal fun candidateBudgets(
+        selected: List<Corpus>,
+        route: CorpusRoute?,
+        perCorpus: Int,
+    ): Map<Corpus, Int> {
+        if (route == null) return selected.associateWith { perCorpus }
+        val topN = rerankerTopN.coerceAtLeast(0)
+        val primaryTarget = (config.routedCandidatesPerCorpus * 2).coerceIn(25, 30)
+        val secondaryMin = 10
+        val secondaryMax = 15
+        val probabilities = route.probabilities
+        val ordered = selected.sortedByDescending { probabilities[it] ?: 0.0 }
+        val primary = ordered.firstOrNull() ?: return emptyMap()
+        val secondaries = ordered.drop(1)
+        val strongestSecondary = secondaries.maxOfOrNull { probabilities[it] ?: 0.0 } ?: 0.0
+        val reserveForSecondaries = when {
+            secondaries.size >= 2 && topN >= 45 -> 25
+            secondaries.isNotEmpty() -> minOf(15, (topN - primaryTarget).coerceAtLeast(0))
+            else -> 0
+        }
+        val primaryBudget = if (topN in 25..44) {
+            minOf(primaryTarget, topN)
+        } else {
+            minOf(primaryTarget, (topN - reserveForSecondaries).coerceAtLeast(0))
+        }
+        var remaining = topN - primaryBudget
+        val budgets = linkedMapOf(primary to primaryBudget)
+        for (corpus in secondaries) {
+            if (remaining < secondaryMin) {
+                budgets[corpus] = 0
+                continue
+            }
+            val relativeWeight = if (strongestSecondary > 0.0) {
+                ((probabilities[corpus] ?: 0.0) / strongestSecondary).coerceIn(0.0, 1.0)
+            } else {
+                0.0
+            }
+            val desired = (secondaryMin + kotlin.math.round(
+                (secondaryMax - secondaryMin) * relativeWeight,
+            ).toInt()).coerceIn(secondaryMin, secondaryMax)
+            val allocated = minOf(desired, remaining)
+            budgets[corpus] = allocated
+            remaining -= allocated
+        }
+        return budgets
+    }
+
+    private fun needsBroaden(results: List<SearchResult>, route: CorpusRoute? = null): Boolean {
+        val scores = results.mapNotNull { it.relevanceScore }.sortedDescending()
+        if (scores.isEmpty()) return (route?.graphExpansionProbability ?: 0.0) >= 0.65
+        val best = scores.first()
+        if (best >= 0.65) return false
+        if (best < 0.5) return true
+        if ((route?.graphExpansionProbability ?: 0.0) >= 0.65) return true
+        val relevanceMargin = best - (scores.getOrNull(1) ?: return false)
+        val routeScores = route?.probabilities?.values?.sortedDescending().orEmpty()
+        val routeMargin = if (routeScores.size >= 2) routeScores[0] - routeScores[1] else 1.0
+        return relevanceMargin < 0.08 && routeMargin < 0.15
+    }
+
+    private fun rerankInstruction(intent: String?): String? = when (intent) {
+        "api_how_to" ->
+            "Rank actionable guides, examples, and public APIs above incidental mentions or internal-only details."
+        "exact_symbol" ->
+            "Rank the exact requested symbol or file first; prefer canonical declarations over references."
+        "implementation" ->
+            "Rank the code that performs or validates the behavior above guides, callers, and incidental mentions."
+        "game_data" ->
+            "Rank exact game-data definitions and their directly relevant schema or implementation."
+        "client_ui" ->
+            "Rank the exact client UI layout or implementation above unrelated server and game-data matches."
+        else -> null
+    }
+
+    private fun rerankContentFor(results: List<SearchResult>): Map<String, String> {
+        if (results.isEmpty()) return emptyMap()
+        val placeholders = results.joinToString(",") { "?" }
+        return db.query(
+            "SELECT id, content FROM nodes WHERE id IN ($placeholders)",
+            *results.map { it.nodeId }.toTypedArray(),
+        ) { rs -> rs.getString("id") to (rs.getString("content") ?: "") }
+            .toMap()
+    }
+
+    private fun rerankDocument(result: SearchResult, content: String?): String = buildString {
+        append("corpus: ").appendLine(result.corpus)
+        append("title: ").appendLine(result.displayName)
+        append("path: ").appendLine(result.filePath)
+        result.dataType?.takeIf { it.isNotBlank() }?.let { append("type: ").appendLine(it) }
+        appendLine()
+        val substantive = content?.takeIf { it.isNotBlank() } ?: result.snippet
+        append(stripRerankBoilerplate(substantive).take(config.snippetMaxLength))
+    }
+
+    private fun stripRerankBoilerplate(text: String): String =
+        text.replace(RERANK_BOILERPLATE, "").trim()
+
 
     internal fun diversifyResults(results: List<SearchResult>): List<SearchResult> {
         if ((config.nearDupPenalty >= 1.0 && config.delegatePenalty >= 1.0) || results.size < 2) return results
@@ -719,7 +1011,7 @@ class KnowledgeSearchService(
                 corpus = corpus.id,
             )
         }
-        return results.firstOrNull()
+        return results.firstOrNull()?.takeIf { isAuthorized(it) }
     }
 
 
@@ -744,13 +1036,14 @@ class KnowledgeSearchService(
                 filePath = rs.getString("file_path"),
                 nodeType = rs.getString("node_type"),
             )
-        }
+        }.filter { isAuthorized(Corpus.CODE, it.filePath) }
+
     }
 
     fun resolveClassSourcePath(className: String): String? {
         val name = className.trim()
         if (name.isEmpty()) return null
-        return if ('.' in name) {
+        val path = if ('.' in name) {
             db.query(
                 """SELECT owning_file FROM nodes
                    WHERE corpus = 'code' AND owning_file IS NOT NULL
@@ -767,46 +1060,47 @@ class KnowledgeSearchService(
                 name, "$name#%",
             ) { it.getString("owning_file") }.firstOrNull()
         }
+        return path?.takeIf { isAuthorized(Corpus.CODE, it) }
     }
 
     fun resolveMethodSource(className: String?, methodName: String): MethodSourceResolution {
         val method = methodName.trim()
         if (method.isEmpty()) return MethodSourceResolution(emptyList())
-        if ('#' in method) {
-            val rows = db.query(
+        val rows = if ('#' in method) {
+            db.query(
                 """SELECT id, owning_file, line_start, line_end FROM nodes
                    WHERE corpus = 'code' AND owning_file IS NOT NULL
                      AND (display_name = ? OR id = ? OR id LIKE ?)""",
                 method, method, "%.$method",
             ) { rs -> MethodSourceMatch(rs.getString("id"), rs.getString("owning_file"), rs.getInt("line_start"), rs.getInt("line_end")) }
-            return MethodSourceResolution(rows.distinctBy { it.id })
-        }
-        val cls = className?.trim()?.takeIf { it.isNotEmpty() }
-        val rows = if (cls != null) {
-            if ('.' in cls) {
-                db.query(
-                    """SELECT id, owning_file, line_start, line_end FROM nodes
-                       WHERE corpus = 'code' AND owning_file IS NOT NULL
-                         AND (id = ? OR id LIKE ?)""",
-                    "$cls#$method", "%.$cls#$method",
-                ) { rs -> MethodSourceMatch(rs.getString("id"), rs.getString("owning_file"), rs.getInt("line_start"), rs.getInt("line_end")) }
+        } else {
+            val cls = className?.trim()?.takeIf { it.isNotEmpty() }
+            if (cls != null) {
+                if ('.' in cls) {
+                    db.query(
+                        """SELECT id, owning_file, line_start, line_end FROM nodes
+                           WHERE corpus = 'code' AND owning_file IS NOT NULL
+                             AND (id = ? OR id LIKE ?)""",
+                        "$cls#$method", "%.$cls#$method",
+                    ) { rs -> MethodSourceMatch(rs.getString("id"), rs.getString("owning_file"), rs.getInt("line_start"), rs.getInt("line_end")) }
+                } else {
+                    db.query(
+                        """SELECT id, owning_file, line_start, line_end FROM nodes
+                           WHERE corpus = 'code' AND owning_file IS NOT NULL
+                             AND (display_name = ? OR id LIKE ?)""",
+                        "$cls#$method", "%.$cls#$method",
+                    ) { rs -> MethodSourceMatch(rs.getString("id"), rs.getString("owning_file"), rs.getInt("line_start"), rs.getInt("line_end")) }
+                }
             } else {
                 db.query(
                     """SELECT id, owning_file, line_start, line_end FROM nodes
                        WHERE corpus = 'code' AND owning_file IS NOT NULL
-                         AND (display_name = ? OR id LIKE ?)""",
-                    "$cls#$method", "%.$cls#$method",
+                         AND (display_name LIKE ? OR id LIKE ?)""",
+                    "%#$method", "%#$method",
                 ) { rs -> MethodSourceMatch(rs.getString("id"), rs.getString("owning_file"), rs.getInt("line_start"), rs.getInt("line_end")) }
             }
-        } else {
-            db.query(
-                """SELECT id, owning_file, line_start, line_end FROM nodes
-                   WHERE corpus = 'code' AND owning_file IS NOT NULL
-                     AND (display_name LIKE ? OR id LIKE ?)""",
-                "%#$method", "%#$method",
-            ) { rs -> MethodSourceMatch(rs.getString("id"), rs.getString("owning_file"), rs.getInt("line_start"), rs.getInt("line_end")) }
         }
-        val distinct = rows.distinctBy { it.id }
+        val distinct = rows.filter { isAuthorized(Corpus.CODE, it.owningFile) }.distinctBy { it.id }
         return MethodSourceResolution(distinct)
     }
 
@@ -814,13 +1108,19 @@ class KnowledgeSearchService(
         val id = raw.trim()
         if (id.isEmpty()) return NodeIdResolution(null, emptyList())
         val exact = db.query(
-            "SELECT id FROM nodes WHERE id = ? LIMIT 1", id,
-        ) { it.getString("id") }
-        if (exact.isNotEmpty()) return NodeIdResolution(id, emptyList())
+            "SELECT id, corpus, file_path FROM nodes WHERE id = ? LIMIT 1", id,
+        ) { Triple(it.getString("id"), it.getString("corpus"), it.getString("file_path") ?: "") }
+        val exactRow = exact.firstOrNull()
+        if (exactRow != null) {
+            return if (isAuthorized(exactRow.second, exactRow.third)) NodeIdResolution(id, emptyList())
+            else NodeIdResolution(null, emptyList())
+        }
         val refs = db.query(
-            "SELECT DISTINCT id FROM nodes WHERE display_name = ? OR id LIKE ?",
+            "SELECT DISTINCT id, corpus, file_path FROM nodes WHERE display_name = ? OR id LIKE ?",
             id, "%.$id",
-        ) { it.getString("id") }
+        ) { Triple(it.getString("id"), it.getString("corpus"), it.getString("file_path") ?: "") }
+            .filter { isAuthorized(it.second, it.third) }
+            .map { it.first }
         return when (refs.size) {
             0 -> NodeIdResolution(null, emptyList())
             1 -> NodeIdResolution(refs.first(), emptyList())
@@ -837,6 +1137,7 @@ class KnowledgeSearchService(
         queue.add(startFile to true)
         while (queue.isNotEmpty()) {
             val (owningFile, isOwn) = queue.removeFirst()
+            if (!isAuthorized(Corpus.CODE, owningFile)) continue
             if (!visitedFiles.add(owningFile)) continue
             val fqcn = fqcnForOwningFile(owningFile)
             val declaringType = fqcn?.substringAfterLast('.') ?: ""

@@ -2,6 +2,9 @@
 package com.hyindex.knowledge.index
 
 import com.hyindex.common.settings.HytaleVersionDetector
+import com.hyindex.knowledge.core.db.Corpus
+import com.hyindex.knowledge.core.db.CorpusProvenanceService
+
 import com.hyindex.knowledge.core.index.CorpusIndexer
 import com.hyindex.knowledge.core.index.IndexContext
 import com.hyindex.knowledge.core.index.IndexResult
@@ -20,13 +23,20 @@ class BuildAllIndexer(
     fun run(force: Boolean = false, extraPlugins: List<CorpusIndexer> = emptyList()): List<IndexResult> {
         val results = mutableListOf<IndexResult>()
         ctx.indexDir.mkdirs()
-        if ("code" in corpora) results += safe("code") { CodeIndexer(ctx).index(force) }
-        if ("gamedata" in corpora) results += safe("gamedata") { GameDataIndexer(ctx).index() }
-        if ("client" in corpora) results += safe("client") { ClientUiIndexer(ctx).index(force) }
-        if ("docs" in corpora) results += safe("docs") { DocsIndexer(ctx, docRoots, includeGithubDocs).index() }
+        val requested = if (corpora.isEmpty()) {
+            emptySet()
+        } else {
+            corpora.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+        }
+        fun builtin(id: String) = id in requested
+        if (builtin("code")) results += safe("code") { CodeIndexer(ctx).index(force) }
+        if (builtin("gamedata")) results += safe("gamedata") { GameDataIndexer(ctx).index() }
+        if (builtin("client")) results += safe("client") { ClientUiIndexer(ctx).index(force) }
+        if (builtin("docs")) results += safe("docs") { DocsIndexer(ctx, docRoots, includeGithubDocs).index() }
+        if (builtin("visual")) results += safe("visual") { VisualAssetIndexer(ctx).index() }
         val plugins = extraPlugins.ifEmpty { java.util.ServiceLoader.load(CorpusIndexer::class.java).toList() }
         for (plugin in plugins) {
-            if (plugin.corpus in corpora || corpora.isEmpty()) {
+            if (plugin.corpus.trim().lowercase() in requested) {
                 results += safe(plugin.corpus) { plugin.index(ctx) }
             }
         }
@@ -34,11 +44,19 @@ class BuildAllIndexer(
         return results
     }
 
-    private inline fun safe(corpus: String, block: () -> IndexResult): IndexResult =
-        try { block() } catch (e: Exception) {
+    private inline fun safe(corpus: String, block: () -> IndexResult): IndexResult {
+        val result = try {
+            block()
+        } catch (e: Exception) {
             ctx.log.warn("$corpus indexing failed: ${e.message}")
             IndexResult(corpus, 0, skipped = false, error = e.message ?: "unknown")
         }
+        if (result.ok && !result.skipped) {
+            Corpus.entries.find { it.id == corpus }?.let { CorpusProvenanceService(ctx).record(it) }
+        }
+        return result
+    }
+
 
     @Serializable
     private data class VersionMeta(

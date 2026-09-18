@@ -42,7 +42,7 @@ class ArchivalVersionTest {
         val prepared = GitSourceProvider.prepare("release", cacheBase, StdoutLogProvider, origin.absolutePath)
         val versionInfo = prepared.version
         val slug = versionInfo.slug
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = slug)
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = slug)
         val versionDir = cfg.resolvedIndexPath()
 
         val priorDir = if (!force) {

@@ -1,6 +1,7 @@
 package com.hyindex.knowledge.core.eval
 
 import com.hyindex.knowledge.core.config.KnowledgeConfig
+import com.hyindex.knowledge.core.config.RerankerProfile
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -35,18 +36,35 @@ class SweepGridTest {
         assertEquals(base.hybridRrfK, out.hybridRrfK)
     }
 
-    @Test fun `applyOverrides parses int and boolean knobs`() {
-        val base = KnowledgeConfig()
-        val out = SweepGrid.applyOverrides(base, mapOf("hybridRrfK" to "40", "rerankerEnabled" to "true"))
-        assertEquals(40, out.hybridRrfK)
-        assertEquals(true, out.rerankerEnabled)
-    }
 
     @Test fun `applyOverrides applies multiple knobs at once`() {
         val base = KnowledgeConfig()
         val out = SweepGrid.applyOverrides(base, mapOf("hybridNameWeight" to "7", "hybridBodyWeight" to "2"))
         assertEquals(7.0, out.hybridNameWeight)
         assertEquals(2.0, out.hybridBodyWeight)
+    }
+
+    @Test
+    fun `reranker top-N sweep updates the configured profile`() {
+        val base = KnowledgeConfig(
+            rerankerProfile = RerankerProfile(
+                provider = "cohere",
+                model = "rerank-v4.0-pro",
+                topN = 50,
+            ),
+        )
+
+        val out = SweepGrid.applyOverrides(base, mapOf("rerankerTopN" to "30"))
+
+        assertEquals(30, out.rerankerProfile?.topN)
+        assertEquals("cohere", out.rerankerProfile?.provider)
+    }
+
+    @Test
+    fun `reranker top-N sweep rejects missing profile`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            SweepGrid.applyOverrides(KnowledgeConfig(), mapOf("rerankerTopN" to "30"))
+        }
     }
 
     @Test fun `applyOverrides recognizes delegatePenalty`() {

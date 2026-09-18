@@ -7,7 +7,6 @@ import com.hyindex.knowledge.core.logging.LogProvider
 import com.hyindex.knowledge.core.progress.ProgressReporter
 import java.io.File
 
-
 class IndexContext(
     val config: KnowledgeConfig,
     val db: KnowledgeDatabase,
@@ -16,10 +15,8 @@ class IndexContext(
     val progress: ProgressReporter,
     val decompileDir: File = decompileDirFor(config),
     val assetsZip: File? = null,
-
     val gameDataDir: File? = null,
     val manifestRoot: File? = null,
-
     val clientFolder: File? = null,
     val docsDir: File? = null,
 ) {

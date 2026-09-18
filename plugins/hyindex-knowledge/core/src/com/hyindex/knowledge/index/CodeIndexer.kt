@@ -1,12 +1,14 @@
 // Copyright 2026 Hyindex. All rights reserved.
 package com.hyindex.knowledge.index
 
-import com.hyindex.knowledge.core.db.EmbeddingPurpose
 import com.hyindex.knowledge.core.embedding.EmbeddingProvider
 import com.hyindex.knowledge.core.embedding.embedBatched
+import com.hyindex.knowledge.core.db.Corpus
+import com.hyindex.knowledge.core.index.ContextualDocumentGroups
 import com.hyindex.knowledge.core.index.HnswIndex
 import com.hyindex.knowledge.core.index.IndexContext
 import com.hyindex.knowledge.core.index.IndexResult
+import com.hyindex.knowledge.core.index.SourceChunk
 import com.hyindex.knowledge.extraction.JavaChunker
 import com.hyindex.knowledge.extraction.JavaExtractor
 import kotlinx.coroutines.runBlocking
@@ -28,14 +30,14 @@ class CodeIndexer(private val ctx: IndexContext) {
         ctx.progress.status("Detecting changes..."); ctx.progress.fraction(0.0)
         val detected = hashTracker.detectChanges(
             sourceDir = decompileDir,
-            corpusType = "java",
+            corpusType = Corpus.CODE.id,
             fileFilter = { it.startsWith("com/hypixel/hytale/") },
         )
         val changes = if (force) {
             FileHashTracker.ChangeSet(
                 added = emptySet(),
                 changed = detected.currentHashes.keys,
-                deleted = emptySet(),
+                deleted = detected.deleted,
                 unchanged = emptySet(),
                 currentHashes = detected.currentHashes,
             )
@@ -50,9 +52,9 @@ class CodeIndexer(private val ctx: IndexContext) {
         // Remove stale files' nodes + edges before re-indexing only the delta.
         val stalePaths = changes.changed + changes.deleted
         if (stalePaths.isNotEmpty()) {
-            hashTracker.removeHashes(stalePaths)
+            hashTracker.removeHashes(stalePaths, Corpus.CODE.id)
             db.inTransaction { conn ->
-                val ps = conn.prepareStatement("DELETE FROM nodes WHERE owning_file = ?")
+                val ps = conn.prepareStatement("DELETE FROM nodes WHERE owning_file = ? AND corpus = 'code'")
                 for (path in stalePaths) { ps.setString(1, path); ps.addBatch() }
                 ps.executeBatch()
             }
@@ -84,10 +86,11 @@ class CodeIndexer(private val ctx: IndexContext) {
                 for (chunk in deltaChunks) {
                     val simpleClass = chunk.className.substringAfterLast('.')
                     val displayName = if (chunk.methodName.isBlank()) simpleClass else "$simpleClass#${chunk.methodName}"
+                    val embed = chunk.embeddingText
                     ps.setString(1, chunk.id); ps.setString(2, chunk.nodeType)
                     ps.setString(3, displayName)
                     ps.setString(4, chunk.filePath); ps.setInt(5, chunk.lineStart); ps.setInt(6, chunk.lineEnd)
-                    ps.setString(7, chunk.content); ps.setString(8, chunk.embeddingText); ps.setInt(9, 0)
+                    ps.setString(7, chunk.content); ps.setString(8, embed); ps.setInt(9, 0)
                     val relPath = File(chunk.filePath).relativeTo(decompileDir).path.replace('\\', '/')
                     ps.setString(10, relPath); ps.setString(11, facetMetadataJson(chunk)); ps.addBatch()
                 }
@@ -98,11 +101,11 @@ class CodeIndexer(private val ctx: IndexContext) {
         }
 
         // Rebuild the vector index, FTS and chunk ordinals from the full current corpus.
-        val provider = EmbeddingProvider.fromConfig(ctx.config, EmbeddingPurpose.CODE)
+        val provider = EmbeddingProvider.fromConfig(ctx.config, Corpus.CODE)
         runBlocking { provider.validate() }
         indexedCount = rebuildCodeIndex(provider)
 
-        if (changes.currentHashes.isNotEmpty()) hashTracker.updateHashes(changes.currentHashes)
+        if (changes.currentHashes.isNotEmpty()) hashTracker.updateHashes(changes.currentHashes, Corpus.CODE.id)
         ctx.progress.fraction(1.0)
         ctx.log.info("Knowledge index built: $indexedCount methods indexed")
         return IndexResult("code", indexedCount, skipped = false, error = null)
@@ -110,36 +113,23 @@ class CodeIndexer(private val ctx: IndexContext) {
 
     // Rebuild HNSW + FTS + chunk_index from every current code node. Vectors for unchanged
     // nodes come from the shared embedding cache; only genuinely new texts are embedded.
-    private class CodeRow(val id: String, val name: String, val body: String, val text: String)
+    private class CodeRow(val id: String, val name: String, val body: String, val text: String, val owningFile: String?)
 
     private fun rebuildCodeIndex(provider: EmbeddingProvider): Int {
         val db = ctx.db
         val indexDir = ctx.indexDir
         val rows = db.query(
-            "SELECT id, display_name, content, embedding_text FROM nodes WHERE corpus = 'code' AND embedding_text IS NOT NULL ORDER BY id"
-        ) { rs -> CodeRow(rs.getString("id"), rs.getString("display_name"), rs.getString("content") ?: "", rs.getString("embedding_text")) }
+            "SELECT id, display_name, content, embedding_text, owning_file FROM nodes WHERE corpus = 'code' AND embedding_text IS NOT NULL ORDER BY id"
+        ) { rs -> CodeRow(rs.getString("id"), rs.getString("display_name"), rs.getString("content") ?: "", rs.getString("embedding_text"), rs.getString("owning_file")) }
 
         if (rows.isEmpty()) {
             FtsTokenizer.populate(db, "code", emptyList(), splitBody = true)
             return 0
         }
 
-        val texts = rows.map { it.text }
-        val cacheResult = ctx.cache.lookup(texts, provider.modelId)
-        val uncachedTexts = cacheResult.uncachedIndices.map { texts[it] }
-        ctx.progress.status("Embedding ${uncachedTexts.size} new chunk(s) (${cacheResult.cached.size} cached)..."); ctx.progress.fraction(0.4)
-        val newEmbeddings = if (uncachedTexts.isEmpty()) emptyList() else {
-            val embedded = runBlocking {
-                provider.embedBatched(uncachedTexts, batchSize = 32, onBatchComplete = { done, total ->
-                    ctx.progress.fraction(0.4 + (0.3 * done / total.coerceAtLeast(1)))
-                })
-            }
-            ctx.cache.store(uncachedTexts, embedded, provider.modelId)
-            embedded
-        }
-        val vectors = arrayOfNulls<FloatArray>(texts.size)
-        for ((idx, vec) in cacheResult.cached) vectors[idx] = vec
-        for ((i, origIdx) in cacheResult.uncachedIndices.withIndex()) vectors[origIdx] = newEmbeddings[i]
+        ctx.progress.status("Embedding ${rows.size} code chunk(s)..."); ctx.progress.fraction(0.4)
+        val sourceChunks = rows.map { SourceChunk(Corpus.CODE, it.text, owningFile = it.owningFile) }
+        val vectors = ContextualDocumentGroups.embedInOrder(sourceChunks, provider, ctx.cache)
 
         // chunk_index must match the HNSW build order (row order) so ordinal->node lookup stays correct.
         db.inTransaction { conn ->
@@ -150,7 +140,7 @@ class CodeIndexer(private val ctx: IndexContext) {
 
         ctx.progress.status("Building vector index..."); ctx.progress.fraction(0.8)
         val hnsw = HnswIndex(vectors.first()!!.size)
-        hnsw.build(vectors.map { it!! })
+        hnsw.build(vectors)
         hnsw.save(Paths.get(indexDir.absolutePath, "hnsw", "code.hnsw"))
         hnsw.close()
 

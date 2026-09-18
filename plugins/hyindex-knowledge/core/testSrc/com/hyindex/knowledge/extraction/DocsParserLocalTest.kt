@@ -103,4 +103,16 @@ class DocsParserLocalTest {
         assertEquals(1, result.chunks.size, "only HOWTO.md should be kept")
         assertTrue(result.chunks.first().relativePath.endsWith("HOWTO.md"))
     }
+
+    @Test fun `walk skips outbound markdown symlink`() {
+        val root = Files.createTempDirectory("hyindex-docs-link").toFile()
+        java.io.File(root, "Keep.md").writeText("# Keep\n\nSafe.\n")
+        val outside = Files.createTempDirectory("secret-md").toFile()
+        val secret = java.io.File(outside, "secret.md").apply { writeText("# Secret\n\nleak\n") }
+        Files.createSymbolicLink(java.io.File(root, "leak.md").toPath(), secret.toPath())
+        val result = DocsParser.parseLocalMarkdown(listOf(root))
+        assertEquals(1, result.chunks.size)
+        assertTrue(result.chunks.none { it.relativePath.contains("leak") || it.content.contains("leak") })
+        root.deleteRecursively(); outside.deleteRecursively()
+    }
 }

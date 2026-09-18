@@ -13,6 +13,7 @@ import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import kotlin.io.path.exists
+import com.hyindex.knowledge.core.source.CanonicalRoots
 
 
 object GameDataParser {
@@ -163,9 +164,7 @@ object GameDataParser {
         val errors = mutableListOf<String>()
         if (!root.exists()) return ParseResult(emptyList(), listOf("Assets dir not found at: $root"))
 
-        val allFiles = Files.walk(root).use { stream ->
-            stream.filter { Files.isRegularFile(it) }.toList()
-        }
+        val allFiles = CanonicalRoots.walkSafeFiles(root.toFile()).map { it.toPath() }.toList()
 
         val langFiles = allFiles.filter { it.toString().endsWith(".lang") }
         val jsonFiles = allFiles.filter { it.toString().endsWith(".json") }
@@ -174,7 +173,6 @@ object GameDataParser {
         for (langPath in langFiles) {
             val relPath = root.relativize(langPath).toString().replace('\\', '/')
             if (relPath.endsWith("fallback.lang")) continue
-            val langDir = relPath.substringBefore("/Languages/", "")
             if (!relPath.contains("/Languages/")) continue
             val prefix = LangParser.derivePrefix(relPath)
             val text = String(Files.readAllBytes(langPath), Charsets.UTF_8)
@@ -228,13 +226,13 @@ object GameDataParser {
             val ns = byNamespace.keys.firstOrNull() ?: prefix
             val id = "gamedata:lang:$prefix:$ns"
             val hash = sha256(text.toByteArray())
-            return listOf(GameDataChunk(id, GameDataType.LOCALIZATION, prefix, filePath, hash, "", listOf(GameDataType.LOCALIZATION.id), emptyList(), text))
+            return listOf(GameDataChunk(id, GameDataType.LOCALIZATION, prefix, filePath, hash, text, listOf(GameDataType.LOCALIZATION.id), emptyList(), text))
         }
         return byNamespace.map { (ns, nsEntries) ->
             val text = GameDataTextBuilder.buildLocalizationText("$prefix.$ns", nsEntries, filePath)
             val id = "gamedata:lang:$prefix:$ns"
             val hash = sha256(text.toByteArray())
-            GameDataChunk(id, GameDataType.LOCALIZATION, "$prefix.$ns", filePath, hash, "", listOf(GameDataType.LOCALIZATION.id), emptyList(), text)
+            GameDataChunk(id, GameDataType.LOCALIZATION, "$prefix.$ns", filePath, hash, text, listOf(GameDataType.LOCALIZATION.id), emptyList(), text)
         }
     }
 

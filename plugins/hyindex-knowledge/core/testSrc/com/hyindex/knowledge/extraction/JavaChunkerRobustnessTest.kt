@@ -94,6 +94,51 @@ class JavaChunkerRobustnessTest {
         assertTrue(chunks.any { it.methodName == "sum" }, "expected record method 'sum' to be chunked")
     }
 
+    @Test
+    fun `method-less outer record is retained when a nested record has methods`() {
+        val source = """
+            package com.hypixel.hytale.demo;
+            public record Config(String host) {
+                public record RateLimit(int requests) {
+                    public int doubled() { return requests * 2; }
+                }
+            }
+        """.trimIndent()
+        val file = File(tempDir, "Config.java")
+        file.writeText(source)
+
+        val chunks = JavaChunker.chunkFile(file)
+
+        assertTrue(
+            chunks.any {
+                it.id == "com.hypixel.hytale.demo.Config" &&
+                    it.nodeType == "JavaType" &&
+                    it.content.contains("record Config")
+            },
+            "the outer record must not disappear when only its nested record has a method",
+        )
+        assertTrue(chunks.any { it.methodName == "doubled" })
+    }
+
+    @Test
+    fun `compact record constructor is indexed as a constructor`() {
+        val source = """
+            package com.hypixel.hytale.demo;
+            public record Guarded(int value) {
+                public Guarded {
+                    if (value < 0) throw new IllegalArgumentException();
+                }
+            }
+        """.trimIndent()
+        val file = File(tempDir, "Guarded.java")
+        file.writeText(source)
+
+        val constructor = JavaChunker.chunkFile(file).single { it.methodName == "<init>" }
+
+        assertEquals("JavaMethod", constructor.nodeType)
+        assertTrue(constructor.content.contains("value < 0"))
+    }
+
 
     @Test
     fun `an unparseable file with a recognizable type yields one file-level fallback node`() {
@@ -346,5 +391,20 @@ class JavaChunkerRobustnessTest {
         val log = chunks.firstOrNull { it.methodName == "log" }
         assertNotNull(log, "a class static block with nested braces must not corrupt parsing when the file also declares an interface")
         assertEquals("JavaMethod", log!!.nodeType)
+    }
+
+    @Test
+    fun `chunkDirectory skips outbound java symlink`() {
+        val dir = File(tempDir, "src").apply { mkdirs() }
+        File(dir, "Ok.java").writeText("package com.hypixel.hytale; public class Ok { public void a(){} }")
+        val outside = Files.createTempDirectory("secret-java").toFile()
+        val secret = File(outside, "Secret.java").apply {
+            writeText("package com.hypixel.hytale; public class Secret { public void leak(){} }")
+        }
+        Files.createSymbolicLink(File(dir, "Secret.java").toPath(), secret.toPath())
+        val chunks = JavaChunker.chunkDirectory(dir)
+        assertTrue(chunks.none { it.className.contains("Secret") || it.methodName == "leak" })
+        assertTrue(chunks.any { it.className.endsWith("Ok") })
+        outside.deleteRecursively()
     }
 }

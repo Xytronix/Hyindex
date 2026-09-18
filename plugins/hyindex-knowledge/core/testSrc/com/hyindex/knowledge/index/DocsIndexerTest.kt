@@ -15,7 +15,7 @@ import java.nio.file.Files
 class DocsIndexerTest {
     @Test fun `incremental docs re-index re-embeds all chunks so the HNSW stays complete`() {
         val base = Files.createTempDirectory("hyindex-docs-incr").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val docs = Files.createTempDirectory("hyindex-docroot-incr").toFile()
         java.io.File(docs, "a.md").writeText("# A\n\nFirst doc.\n")
         java.io.File(docs, "b.md").writeText("# B\n\nSecond doc.\n")
@@ -34,7 +34,7 @@ class DocsIndexerTest {
     }
     @Test fun `indexes local markdown into docs corpus without network`() {
         val base = Files.createTempDirectory("hyindex-docs").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val docs = Files.createTempDirectory("hyindex-docroot").toFile()
         java.io.File(docs, "guide.md").writeText("# Guide\n\nHow to mod Hytale.\n")
         val log = StdoutLogProvider
@@ -52,7 +52,7 @@ class DocsIndexerTest {
 
     @Test fun `dedups verbatim cross-source duplicates keeping the higher-priority source`() {
         val base = Files.createTempDirectory("hyindex-docs-dedup").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val repoRoot = java.io.File(Files.createTempDirectory("hyindex-dedup-wt").toFile(), "worktrees/release").apply { mkdirs() }
         val localRoot = Files.createTempDirectory("hyindex-dedup-local").toFile()
 
@@ -77,7 +77,7 @@ class DocsIndexerTest {
 
     @Test fun `indexes both chunks when two roots share the same relative path`() {
         val base = Files.createTempDirectory("hyindex-docs-collision").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val root1 = Files.createTempDirectory("hyindex-root1").toFile()
         val root2 = Files.createTempDirectory("hyindex-root2").toFile()
 

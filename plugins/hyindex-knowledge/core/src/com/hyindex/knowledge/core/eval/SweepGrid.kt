@@ -38,10 +38,13 @@ object SweepGrid {
                 "hybridBodyWeight" -> c.copy(hybridBodyWeight = value.toDouble())
                 "perSeedExpansionCap" -> c.copy(perSeedExpansionCap = value.toInt())
                 "gamedataFetchLimit" -> c.copy(gamedataFetchLimit = value.toInt())
-                "rerankerTopN" -> c.copy(rerankerTopN = value.toInt())
+                "rerankerTopN" -> c.copy(
+                    rerankerProfile = requireNotNull(c.rerankerProfile) {
+                        "rerankerTopN sweep requires rerankerProfile"
+                    }.copy(topN = value.toInt()),
+                )
                 "hybridRrfK" -> c.copy(hybridRrfK = value.toInt())
                 "hybridLexicalLimit" -> c.copy(hybridLexicalLimit = value.toInt())
-                "rerankerEnabled" -> c.copy(rerankerEnabled = value.toBooleanStrict())
                 "hybridEnabled" -> c.copy(hybridEnabled = value.toBooleanStrict())
                 "nearDupPenalty" -> c.copy(nearDupPenalty = value.toDouble())
                 "nearDupJaccard" -> c.copy(nearDupJaccard = value.toDouble())
@@ -66,7 +69,6 @@ object SweepGrid {
         "rerankerTopN",
         "hybridRrfK",
         "hybridLexicalLimit",
-        "rerankerEnabled",
         "hybridEnabled",
         "nearDupPenalty",
         "nearDupJaccard",

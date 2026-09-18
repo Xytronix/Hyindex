@@ -2,6 +2,7 @@
 package com.hyindex.knowledge.core.diff
 
 import com.hyindex.knowledge.core.db.KnowledgeDatabase
+import com.hyindex.knowledge.core.version.VersionResolver
 import com.hyindex.knowledge.core.logging.LogProvider
 import com.hyindex.knowledge.core.logging.StdoutLogProvider
 import kotlinx.serialization.Serializable
@@ -27,25 +28,26 @@ class DiffEngine(
         dataTypeFilter: String? = null,
         scopeFilter: String? = null,
         limit: Int = Int.MAX_VALUE,
+        indexRoot: File? = null,
+        authorized: (String, String) -> Boolean = { _, _ -> true },
     ): VersionDiff {
-        val dbA = KnowledgeDatabase.forFile(dbFileA, log)
-        val dbB = KnowledgeDatabase.forFile(dbFileB, log)
+        val dbA = openLiveDb(dbFileA, indexRoot)
+        val dbB = openLiveDb(dbFileB, indexRoot)
         try {
-            val nodesA = loadNodeSummaries(dbA, corpusFilter, scopeFilter)
-            val nodesB = loadNodeSummaries(dbB, corpusFilter, scopeFilter)
+            val nodesA = loadNodeSummaries(dbA, corpusFilter, scopeFilter).filterAuthorized(authorized)
+            val nodesB = loadNodeSummaries(dbB, corpusFilter, scopeFilter).filterAuthorized(authorized)
             val unchangedFiles = run {
                 val hashesA = loadFileHashes(dbA)
                 val hashesB = loadFileHashes(dbB)
                 hashesA.entries.filter { (path, hash) -> hashesB[path] == hash }.map { it.key }.toSet()
             }
             return computeDiffFromSummaries(versionA, versionB, nodesA, nodesB, unchangedFiles,
-                dbA, dbB, corpusFilter, changeTypeFilter, dataTypeFilter, scopeFilter, limit)
+                dbA, dbB, corpusFilter, changeTypeFilter, dataTypeFilter, scopeFilter, limit, authorized)
         } finally {
             dbA.close()
             dbB.close()
         }
     }
-
 
     fun computeDiff(
         versionA: String,
@@ -59,9 +61,13 @@ class DiffEngine(
         dataTypeFilter: String? = null,
         scopeFilter: String? = null,
         limit: Int = Int.MAX_VALUE,
+        indexRoot: File? = null,
+        authorized: (String, String) -> Boolean = { _, _ -> true },
     ): VersionDiff {
-        val dbA: KnowledgeDatabase? = if (!isSnapshotA) KnowledgeDatabase.forFile(sourceA, log) else null
-        val dbB: KnowledgeDatabase? = if (!isSnapshotB) KnowledgeDatabase.forFile(sourceB, log) else null
+        val dbA: KnowledgeDatabase? = if (!isSnapshotA) openLiveDb(sourceA, indexRoot) else null
+        val dbB: KnowledgeDatabase? = if (!isSnapshotB) openLiveDb(sourceB, indexRoot) else null
+        if (isSnapshotA) requireSnapshotInRoot(sourceA, indexRoot)
+        if (isSnapshotB) requireSnapshotInRoot(sourceB, indexRoot)
         try {
             val rawA: Map<String, NodeSummary> = if (isSnapshotA) {
                 loadSnapshot(sourceA).associateBy { it.id }
@@ -74,8 +80,8 @@ class DiffEngine(
                 loadNodeSummaries(dbB!!, corpusFilter, scopeFilter)
             }
 
-            val nodesA = if (isSnapshotA) rawA.filterSummaries(corpusFilter, scopeFilter) else rawA
-            val nodesB = if (isSnapshotB) rawB.filterSummaries(corpusFilter, scopeFilter) else rawB
+            val nodesA = (if (isSnapshotA) rawA.filterSummaries(corpusFilter, scopeFilter) else rawA).filterAuthorized(authorized)
+            val nodesB = (if (isSnapshotB) rawB.filterSummaries(corpusFilter, scopeFilter) else rawB).filterAuthorized(authorized)
 
             val unchangedFiles: Set<String> = if (dbA != null && dbB != null) {
                 val hA = loadFileHashes(dbA)
@@ -83,12 +89,31 @@ class DiffEngine(
                 hA.entries.filter { (p, h) -> hB[p] == h }.map { it.key }.toSet()
             } else emptySet()
             return computeDiffFromSummaries(versionA, versionB, nodesA, nodesB, unchangedFiles,
-                dbA, dbB, corpusFilter, changeTypeFilter, dataTypeFilter, scopeFilter, limit)
+                dbA, dbB, corpusFilter, changeTypeFilter, dataTypeFilter, scopeFilter, limit, authorized)
         } finally {
             dbA?.close()
             dbB?.close()
         }
     }
+
+    private fun openLiveDb(file: File, indexRoot: File?): KnowledgeDatabase {
+        val canon = file.canonicalFile
+        if (indexRoot != null) {
+            require(canon.name == "knowledge.db") { "refused to open non-knowledge.db path" }
+            val versions = File(indexRoot, "versions")
+            require(VersionResolver.containedUnder(versions, canon)) { "knowledge.db escapes versions root" }
+        }
+        return KnowledgeDatabase.forFile(canon, log)
+    }
+
+    private fun requireSnapshotInRoot(file: File, indexRoot: File?) {
+        if (indexRoot == null) return
+        val snapshots = File(indexRoot, "snapshots")
+        require(VersionResolver.containedUnder(snapshots, file.canonicalFile)) { "snapshot escapes snapshots root" }
+    }
+
+    private fun Map<String, NodeSummary>.filterAuthorized(authorized: (String, String) -> Boolean): Map<String, NodeSummary> =
+        filter { (_, node) -> authorized(node.corpus, node.filePath ?: "") }
 
     private fun Map<String, NodeSummary>.filterSummaries(
         corpusFilter: String?,
@@ -120,6 +145,7 @@ class DiffEngine(
         dataTypeFilter: String?,
         @Suppress("UNUSED_PARAMETER") scopeFilter: String?,
         limit: Int,
+        authorized: (String, String) -> Boolean,
     ): VersionDiff {
         val nodeIdsA = nodesA.keys
         val nodeIdsB = nodesB.keys
@@ -190,6 +216,7 @@ class DiffEngine(
             if (ct != null) filtered = filtered.filter { it.changeType == ct }
         }
         if (dataTypeFilter != null) filtered = filtered.filter { it.dataType == dataTypeFilter }
+        filtered = filtered.filter { authorized(it.corpus, it.filePath ?: "") }
 
         val finalEntries = filtered.take(limit).toList()
 

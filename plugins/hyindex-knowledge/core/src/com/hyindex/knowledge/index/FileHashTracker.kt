@@ -2,6 +2,7 @@
 package com.hyindex.knowledge.index
 
 import com.hyindex.knowledge.core.db.KnowledgeDatabase
+import com.hyindex.knowledge.core.source.CanonicalRoots
 import java.io.File
 import java.security.MessageDigest
 
@@ -43,7 +44,7 @@ class FileHashTracker(private val db: KnowledgeDatabase) {
 
     fun detectChanges(
         sourceDir: File,
-        corpusType: String = "java",
+        corpusType: String = "code",
         extensionFilter: Set<String>? = null,
         fileFilter: ((String) -> Boolean)? = null,
     ): ChangeSet {
@@ -52,19 +53,19 @@ class FileHashTracker(private val db: KnowledgeDatabase) {
 
 
         val currentHashes = mutableMapOf<String, String>()
-        sourceDir.walkTopDown()
+        CanonicalRoots.walkSafeFiles(sourceDir)
             .filter { file ->
-                file.isFile && (extensionFilter == null || file.extension in extensionFilter)
+                extensionFilter == null || file.extension in extensionFilter
             }
             .forEach { file ->
                 val relativePath = file.relativeTo(sourceDir).path.replace('\\', '/')
-                if (fileFilter == null || fileFilter(relativePath)) {
-                    currentHashes[relativePath] = computeHash(file)
-                }
+                if (fileFilter != null && !fileFilter(relativePath)) return@forEach
+                currentHashes[relativePath] = computeHash(file)
             }
 
         return computeChangeSet(existingHashes, currentHashes)
     }
+
 
 
     fun computeChangesFromMap(hashes: Map<String, String>, corpusType: String): ChangeSet {
@@ -95,7 +96,7 @@ class FileHashTracker(private val db: KnowledgeDatabase) {
     }
 
 
-    fun updateHashes(fileHashes: Map<String, String>, corpusType: String = "java") {
+    fun updateHashes(fileHashes: Map<String, String>, corpusType: String = "code") {
         db.inTransaction { conn ->
             val ps = conn.prepareStatement(
                 "INSERT OR REPLACE INTO file_hashes (file_path, file_hash, corpus_type) VALUES (?, ?, ?)"
@@ -111,12 +112,13 @@ class FileHashTracker(private val db: KnowledgeDatabase) {
     }
 
 
-    fun removeHashes(filePaths: Set<String>) {
+    fun removeHashes(filePaths: Set<String>, corpusType: String) {
         if (filePaths.isEmpty()) return
         db.inTransaction { conn ->
-            val ps = conn.prepareStatement("DELETE FROM file_hashes WHERE file_path = ?")
+            val ps = conn.prepareStatement("DELETE FROM file_hashes WHERE corpus_type = ? AND file_path = ?")
             for (path in filePaths) {
-                ps.setString(1, path)
+                ps.setString(1, corpusType)
+                ps.setString(2, path)
                 ps.addBatch()
             }
             ps.executeBatch()

@@ -4,6 +4,7 @@ package com.hyindex.knowledge.cli
 import com.hyindex.common.settings.HytaleVersionDetector
 import com.hyindex.knowledge.core.config.KnowledgeConfig
 import com.hyindex.knowledge.core.db.EmbeddingCacheDatabase
+import com.hyindex.knowledge.core.db.Corpus
 import com.hyindex.knowledge.core.db.KnowledgeDatabase
 import com.hyindex.knowledge.core.index.EmbeddingCacheService
 import com.hyindex.knowledge.core.index.IndexContext
@@ -14,6 +15,7 @@ import com.hyindex.knowledge.core.source.GitSourceProvider
 import com.hyindex.knowledge.core.version.RetentionPruner
 import com.hyindex.knowledge.core.version.VersionResolver
 import com.hyindex.knowledge.index.BuildAllIndexer
+import com.hyindex.knowledge.index.CorpusVectorRebuilder
 import java.io.File
 import java.lang.management.ManagementFactory
 
@@ -120,6 +122,7 @@ fun main(args: Array<String>) {
     val baseConfig = KnowledgeConfig.loadFromFile() ?: KnowledgeConfig()
     val log = StdoutLogProvider
     val baseDir = baseConfig.resolvedBasePath()
+    val corpora = opts.corpora
 
     var hadError = false
 
@@ -146,7 +149,23 @@ fun main(args: Array<String>) {
                 clientFolder = null,
                 docsDir = null,
             )
-            val results = BuildAllIndexer(ctx, emptyList(), null, opts.corpora, false).run(true)
+            val reembeddable = setOf(Corpus.CODE, Corpus.GAMEDATA, Corpus.CLIENT, Corpus.DOCS)
+            val requestedBuiltIns = reembeddable.filter { it.id in corpora }
+            val rebuilder = CorpusVectorRebuilder(ctx)
+            val results = requestedBuiltIns.map { corpus ->
+                runCatching { rebuilder.rebuild(corpus) }.getOrElse { error ->
+                    com.hyindex.knowledge.core.index.IndexResult(
+                        corpus.id,
+                        indexed = 0,
+                        skipped = false,
+                        error = error.message ?: "unknown",
+                    )
+                }
+            }.toMutableList()
+            val sourceRequired = corpora - reembeddable.mapTo(mutableSetOf(), Corpus::id)
+            if (sourceRequired.isNotEmpty()) {
+                results += BuildAllIndexer(ctx, emptyList(), null, sourceRequired, false).run(true)
+            }
             db.close()
             results.forEach { r ->
                 val state = when { r.error != null -> "FAILED: ${r.error}"; r.skipped -> "skipped"; else -> "${r.indexed} indexed" }
@@ -156,20 +175,19 @@ fun main(args: Array<String>) {
             continue
         }
 
-        val gitPrepared = if (opts.corpora.any { it in setOf("code", "gamedata", "client") })
+        val gitPrepared = if (corpora.any { it in setOf("code", "gamedata", "client") })
             runCatching {
                 GitSourceProvider.prepare(
                     patchline,
                     File(baseDir, "cache"),
                     log,
-                    repoUrl = baseConfig.gitRepoUrl.ifBlank { GitSourceProvider.DEFAULT_REPO_URL },
                     token = baseConfig.gitToken,
                 )
             }
                 .onFailure { log.warn("git source failed for $patchline: ${it.message}") }.getOrNull()
         else null
 
-        if (opts.corpora.any { it in setOf("code", "gamedata", "client") } && gitPrepared == null) {
+        if (corpora.any { it in setOf("code", "gamedata", "client") } && gitPrepared == null) {
             hadError = true; continue
         }
 
@@ -202,7 +220,7 @@ fun main(args: Array<String>) {
         val ctxDecompileDir = gitPrepared?.stageDir ?: File(cfg.resolvedIndexPath(), "decompiled")
 
         val docRoots = buildList {
-            if ("docs" in opts.corpora) {
+            if ("docs" in corpora) {
                 if ("server" in opts.docsSources) gitPrepared?.worktree?.let { add(it) }
                 if ("support" in opts.docsSources)
                     runCatching { com.hyindex.knowledge.core.source.SupportDocsSource.fetchInto(File(baseDir, "cache"), log, force = opts.force) }.getOrNull()?.let { add(it) }
@@ -212,7 +230,7 @@ fun main(args: Array<String>) {
             }
         }
 
-        val includeGithubDocs = ("docs" in opts.corpora) && ("modding" in opts.docsSources)
+        val includeGithubDocs = ("docs" in corpora) && ("modding" in opts.docsSources)
 
         val db = KnowledgeDatabase.forFile(File(cfg.resolvedIndexPath(), "knowledge.db"), log)
         val cache = EmbeddingCacheService(EmbeddingCacheDatabase.forFile(File(baseDir, "embedding-cache.db"), log), log)
@@ -225,7 +243,7 @@ fun main(args: Array<String>) {
             clientFolder = gitPrepared?.let { File(it.worktree, "HytaleAssets/Common/UI") },
             docsDir = null,
         )
-        val results = BuildAllIndexer(ctx, docRoots, versionInfo, opts.corpora, includeGithubDocs).run(opts.force)
+        val results = BuildAllIndexer(ctx, docRoots, versionInfo, corpora, includeGithubDocs).run(opts.force)
         db.close()
 
         KnowledgeConfig.writeToFile(cfg)

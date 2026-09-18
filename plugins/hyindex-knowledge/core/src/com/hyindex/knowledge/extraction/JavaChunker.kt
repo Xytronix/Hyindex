@@ -11,6 +11,7 @@ import com.github.javaparser.ast.stmt.BlockStmt
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter
 import java.io.File
 import java.security.MessageDigest
+import com.hyindex.knowledge.core.source.CanonicalRoots
 
 
 object JavaChunker {
@@ -89,8 +90,8 @@ object JavaChunker {
         pathFilter: ((String) -> Boolean)? = null,
         onProgress: ((String, Int, Int) -> Unit)? = null,
     ): List<MethodChunk> {
-        val javaFiles = dir.walkTopDown()
-            .filter { it.isFile && it.extension == "java" }
+        val javaFiles = CanonicalRoots.walkSafeFiles(dir)
+            .filter { it.extension == "java" }
             .filter { file ->
                 if (pathFilter == null) true
                 else pathFilter(file.relativeTo(dir).path.replace('\\', '/'))
@@ -122,6 +123,7 @@ object JavaChunker {
             if (packageName.isNotEmpty()) "$packageName.${typeDecl.nameAsString}"
             else typeDecl.nameAsString
         )
+        val chunkCountBefore = chunks.size
 
 
         val fields = typeDecl.fields.take(20).map { field ->
@@ -157,6 +159,23 @@ object JavaChunker {
             )
             chunks.add(chunk)
         }
+        if (chunks.size == chunkCountBefore) {
+            chunks.add(
+                buildTypeChunk(
+                    className,
+                    packageName,
+                    typeDecl.nameAsString,
+                    "Type",
+                    typeDecl.toString(),
+                    beginLine(typeDecl),
+                    typeDecl.end.map { it.line }.orElse(0),
+                    imports,
+                    fields,
+                    file,
+                    fileHash,
+                ),
+            )
+        }
     }
 
     private fun extractFromEnum(
@@ -170,6 +189,7 @@ object JavaChunker {
     ) {
         val className = if (packageName.isNotEmpty()) "$packageName.${enumDecl.nameAsString}"
         else enumDecl.nameAsString
+        val chunkCountBefore = chunks.size
 
         val fields = enumDecl.entries.take(20).map { it.nameAsString }
 
@@ -196,6 +216,23 @@ object JavaChunker {
             )
             chunks.add(chunk)
         }
+        if (chunks.size == chunkCountBefore) {
+            chunks.add(
+                buildTypeChunk(
+                    className,
+                    packageName,
+                    enumDecl.nameAsString,
+                    "Enum",
+                    enumDecl.toString(),
+                    beginLine(enumDecl),
+                    enumDecl.end.map { it.line }.orElse(0),
+                    imports,
+                    fields,
+                    file,
+                    fileHash,
+                ),
+            )
+        }
     }
 
     private fun extractFromRecord(
@@ -211,6 +248,7 @@ object JavaChunker {
             if (packageName.isNotEmpty()) "$packageName.${recordDecl.nameAsString}"
             else recordDecl.nameAsString
         )
+        val chunkCountBefore = chunks.size
 
 
         val fields = recordDecl.parameters.take(20).map { it.toString().trim() }
@@ -236,6 +274,83 @@ object JavaChunker {
                 facetsOf(ctor, ctor.body),
             ))
         }
+
+        for (ctor in recordDecl.compactConstructors) {
+            chunks.add(
+                buildMethodChunk(
+                    className,
+                    packageName,
+                    "<init>",
+                    ctor.nameAsString,
+                    ctor.toString(),
+                    beginLine(ctor),
+                    ctor.end.map { it.line }.orElse(0),
+                    imports,
+                    fields,
+                    file,
+                    fileHash,
+                    facetsOf(ctor),
+                ),
+            )
+        }
+        if (chunks.size == chunkCountBefore) {
+            chunks.add(
+                buildTypeChunk(
+                    className,
+                    packageName,
+                    recordDecl.nameAsString,
+                    "Record",
+                    recordDecl.toString(),
+                    beginLine(recordDecl),
+                    recordDecl.end.map { it.line }.orElse(0),
+                    imports,
+                    fields,
+                    file,
+                    fileHash,
+                ),
+            )
+        }
+    }
+
+    private fun buildTypeChunk(
+        className: String,
+        packageName: String,
+        typeName: String,
+        typeKind: String,
+        content: String,
+        lineStart: Int,
+        lineEnd: Int,
+        imports: List<String>,
+        fields: List<String>,
+        file: File,
+        fileHash: String,
+    ): MethodChunk {
+        val shortPackage = packageName.removePrefix("com.hypixel.hytale.")
+        val embeddingText = buildString {
+            appendLine("// Package: $shortPackage")
+            appendLine("// $typeKind: $typeName")
+            if (fields.isNotEmpty()) {
+                appendLine("// Components: ${fields.take(20).joinToString(", ")}")
+            }
+            appendLine()
+            append(content.take(FALLBACK_EMBED_CHARS))
+        }
+        return MethodChunk(
+            id = className,
+            className = className,
+            packageName = packageName,
+            methodName = "",
+            methodSignature = "",
+            content = content,
+            filePath = file.path.replace('\\', '/'),
+            fileHash = fileHash,
+            lineStart = lineStart,
+            lineEnd = lineEnd,
+            imports = imports,
+            fields = fields,
+            embeddingText = embeddingText,
+            nodeType = "JavaType",
+        )
     }
 
 
@@ -302,6 +417,22 @@ object JavaChunker {
             isAbstract = decl.isAbstract,
             annotations = annotations,
             thin = isThinBody(body),
+        )
+    }
+
+    private fun facetsOf(decl: CompactConstructorDeclaration): MethodFacets {
+        val visibility = when (decl.accessSpecifier) {
+            AccessSpecifier.PUBLIC -> "public"
+            AccessSpecifier.PRIVATE -> "private"
+            AccessSpecifier.PROTECTED -> "protected"
+            else -> "package"
+        }
+        return MethodFacets(
+            visibility = visibility,
+            isStatic = false,
+            isAbstract = false,
+            annotations = decl.annotations.map { it.name.identifier },
+            thin = isThinBody(decl.body),
         )
     }
 

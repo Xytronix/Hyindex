@@ -65,6 +65,55 @@ class EmbeddingCacheService(
         cache.storeBatch(entries)
     }
 
+    fun lookupContextual(groups: List<List<String>>, modelId: String): CacheLookupResult {
+        if (groups.isEmpty()) return CacheLookupResult(emptyMap(), emptyList())
+        val hashesByGroup = groups.map { group ->
+            val identity = groupIdentity(group)
+            group.indices.map { index -> sha256("$index\n$identity") }
+        }
+        val found = cache.lookup(hashesByGroup.flatten(), modelId)
+        val cached = mutableMapOf<Int, FloatArray>()
+        val uncached = mutableListOf<Int>()
+        var flatIndex = 0
+        for (groupHashes in hashesByGroup) {
+            val allHit = groupHashes.all(found::containsKey)
+            for (hash in groupHashes) {
+                if (allHit) cached[flatIndex] = found.getValue(hash)
+                else uncached.add(flatIndex)
+                flatIndex++
+            }
+        }
+        if (cached.isNotEmpty()) {
+            log.info("Contextual embedding cache: ${cached.size} hits, ${uncached.size} misses")
+        }
+        return CacheLookupResult(cached, uncached)
+    }
+
+    fun storeContextual(groups: List<List<String>>, vectors: List<FloatArray>, modelId: String) {
+        if (groups.isEmpty()) return
+        val texts = groups.flatten()
+        require(texts.size == vectors.size) {
+            "grouped texts.size (${texts.size}) != vectors.size (${vectors.size})"
+        }
+        val entries = mutableListOf<EmbeddingCacheDatabase.CacheEntry>()
+        var flatIndex = 0
+        for (group in groups) {
+            val identity = groupIdentity(group)
+            for (index in group.indices) {
+                val vector = vectors[flatIndex++]
+                entries.add(
+                    EmbeddingCacheDatabase.CacheEntry(
+                        contentHash = sha256("$index\n$identity"),
+                        modelId = modelId,
+                        vector = vector,
+                        dimension = vector.size,
+                    ),
+                )
+            }
+        }
+        cache.storeBatch(entries)
+    }
+
     companion object {
         private val digest = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
 
@@ -74,5 +123,7 @@ class EmbeddingCacheService(
             val bytes = md.digest(text.toByteArray(Charsets.UTF_8))
             return bytes.joinToString("") { "%02x".format(it) }
         }
+
+        internal fun groupIdentity(group: List<String>): String = group.joinToString("\u001f")
     }
 }

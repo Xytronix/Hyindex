@@ -3,6 +3,9 @@ package com.hyindex.knowledge.mcp.standalone
 
 import com.hyindex.knowledge.core.config.KnowledgeConfig
 import com.hyindex.knowledge.core.db.KnowledgeDatabase
+import com.hyindex.knowledge.core.db.Corpus
+import com.hyindex.knowledge.core.embedding.Reranker
+import com.hyindex.knowledge.core.index.HnswIndex
 import com.hyindex.knowledge.core.index.CorpusIndexManager
 import com.hyindex.knowledge.core.search.KnowledgeSearchService
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
@@ -47,11 +50,6 @@ class HytaleKnowledgeServerTest {
     }
 
 
-    @Test
-    fun `createServer registers all tools`() {
-        val mcpServer = server.createServer()
-        assertEquals(22, mcpServer.tools.size)
-    }
 
     @Test
     fun `get_hytale_usages returns the calling method for direction callers`() = runBlocking {
@@ -180,6 +178,161 @@ class HytaleKnowledgeServerTest {
     }
 
     @Test
+    fun `search_hytale globally reranks candidates from every corpus`() = runBlocking {
+        val indexDir = Files.createTempDirectory("global_rerank_").toFile()
+        indexDir.deleteOnExit()
+        val config = KnowledgeConfig(
+            embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")),
+            corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" },
+            indexPath = indexDir.absolutePath,
+            hybridEnabled = false,
+            rerankerProfile = com.hyindex.knowledge.core.config.RerankerProfile(provider = "fake", model = "fake", topN = 50),
+        )
+        val rankedContent = mapOf(
+            Corpus.CODE to listOf("code:command" to "server command implementation", "code:other" to "unrelated code"),
+            Corpus.CLIENT to listOf("client:menu" to "irrelevant command list UI", "client:other" to "unrelated UI"),
+            Corpus.GAMEDATA to listOf("gamedata:command" to "command signature data", "gamedata:other" to "unrelated data"),
+            Corpus.DOCS to listOf("docs:permissions" to "exact command permissions documentation", "docs:other" to "unrelated docs"),
+        )
+        val ranking = mapOf(
+            "exact command permissions documentation" to 0.95,
+            "server command implementation" to 0.70,
+            "command signature data" to 0.40,
+            "irrelevant command list UI" to 0.10,
+        )
+        val reranker = object : Reranker {
+            override fun rerank(query: String, documents: List<String>): List<Pair<Int, Double>> =
+                documents.mapIndexed { index, document ->
+                    val score = ranking.entries.firstOrNull { it.key in document }?.value ?: 0.01
+                    index to score
+                }.sortedByDescending { it.second }
+        }
+
+        val testDb = KnowledgeDatabase.forFile(File(indexDir, "knowledge.db"))
+        val indexManager = CorpusIndexManager(config)
+        try {
+            for ((corpus, nodes) in rankedContent) {
+                nodes.forEachIndexed { ordinal, (id, content) ->
+                    testDb.execute(
+                        "INSERT INTO nodes (id, node_type, display_name, file_path, content, embedding_text, chunk_index, corpus) " +
+                            "VALUES (?, 'Chunk', ?, ?, ?, ?, ?, ?)",
+                        id, id.substringAfter(':'), "$id.txt", content, content, ordinal, corpus.id,
+                    )
+                }
+                val index = HnswIndex(8)
+                index.build(
+                    listOf(
+                        FloatArray(8) { 1.0f },
+                        FloatArray(8) { if (it == 0) 1.0f else 0.0f },
+                    ),
+                )
+                index.save(indexManager.hnswPath(corpus))
+                index.close()
+            }
+
+            val searchService = KnowledgeSearchService(testDb, indexManager, config = config, reranker = reranker)
+            val testServer = HytaleKnowledgeServer(mapOf("release" to searchService))
+            val tool = testServer.createServer().tools["search_hytale"]!!
+            val result = tool.handler(callToolRequest("search_hytale", buildJsonObject {
+                put("query", "register a custom command with permission requirements")
+                put("limit", 3)
+                put("verbosity", "ids")
+            }))
+
+            assertNull(result.isError)
+            val text = (result.content.first() as io.modelcontextprotocol.kotlin.sdk.types.TextContent).text
+            assertTrue(text.contains("docs:permissions"), "globally relevant docs result should be returned: $text")
+            assertFalse(text.contains("client:menu"), "irrelevant client result should not displace the docs result: $text")
+        } finally {
+            indexManager.closeAll()
+            testDb.close()
+        }
+    }
+
+    @Test
+    fun `search_hytale diversifies post-rerank results by source`() = runBlocking {
+        val indexDir = Files.createTempDirectory("source_div_").toFile()
+        indexDir.deleteOnExit()
+        val config = KnowledgeConfig(
+            embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")),
+            corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" },
+            indexPath = indexDir.absolutePath,
+            hybridEnabled = false,
+            rerankerProfile = com.hyindex.knowledge.core.config.RerankerProfile(provider = "fake", model = "fake", topN = 50),
+        )
+        val rankedContent = mapOf(
+            Corpus.DOCS to listOf("docs:a" to "docs hit a", "docs:b" to "docs hit b", "docs:c" to "docs hit c"),
+            Corpus.CODE to listOf(
+                "code:a" to "code hit a", "code:b" to "code hit b",
+                "code:c" to "code hit c", "code:d" to "code hit d",
+            ),
+            Corpus.GAMEDATA to listOf(
+                "gamedata:a" to "gamedata hit a", "gamedata:b" to "gamedata hit b", "gamedata:c" to "gamedata hit c",
+            ),
+            Corpus.CLIENT to listOf("client:a" to "client hit a", "client:b" to "client hit b", "client:c" to "client hit c"),
+        )
+        val reranker = object : Reranker {
+            override fun rerank(query: String, documents: List<String>): List<Pair<Int, Double>> =
+                documents.mapIndexed { index, document ->
+                    val score = when {
+                        "docs hit" in document -> 0.99
+                        "code hit" in document -> 0.90
+                        "gamedata hit" in document -> 0.80
+                        else -> 0.70
+                    }
+                    index to score
+                }.sortedByDescending { it.second }
+        }
+        val testDb = KnowledgeDatabase.forFile(File(indexDir, "knowledge.db"))
+        val indexManager = CorpusIndexManager(config)
+        try {
+            for ((corpus, nodes) in rankedContent) {
+                val vectors = nodes.mapIndexed { ordinal, (id, content) ->
+                    val sourcePath = when (corpus) {
+                        Corpus.DOCS -> "docs/commands.md"
+                        Corpus.CODE -> if (id.endsWith(":d")) "code/Other.java" else "code/Commands.java"
+                        Corpus.GAMEDATA -> if (id.endsWith(":c")) "gamedata/other.json" else "gamedata/shared.json"
+                        Corpus.CLIENT -> if (id.endsWith(":c")) "client/Other.ui" else "client/Shared.ui"
+                        Corpus.VISUAL -> error("visual corpus not used by this fixture")
+                    }
+                    testDb.execute(
+                        "INSERT INTO nodes (id, node_type, display_name, file_path, content, embedding_text, chunk_index, corpus) " +
+                            "VALUES (?, 'Chunk', ?, ?, ?, ?, ?, ?)",
+                        id, id.substringAfter(':'), sourcePath, content, content, ordinal, corpus.id,
+                    )
+                    FloatArray(8) { 1.0f }
+                }
+                val index = HnswIndex(8)
+                index.build(vectors)
+                index.save(indexManager.hnswPath(corpus))
+                index.close()
+            }
+
+            val searchService = KnowledgeSearchService(testDb, indexManager, config = config, reranker = reranker)
+            val testServer = HytaleKnowledgeServer(mapOf("release" to searchService))
+            val tool = testServer.createServer().tools["search_hytale"]!!
+            val result = tool.handler(callToolRequest("search_hytale", buildJsonObject {
+                put("query", "register a custom command")
+                put("limit", 8)
+                put("verbosity", "ids")
+            }))
+
+            assertNull(result.isError)
+            val text = (result.content.first() as io.modelcontextprotocol.kotlin.sdk.types.TextContent).text
+            fun count(prefix: String) = Regex("$prefix:[a-z]").findAll(text).count()
+            assertEquals(1, count("docs"), "adjacent docs chunks should collapse to one source: $text")
+            assertEquals(2, count("client"), "distinct client sources should remain: $text")
+            assertEquals(2, count("gamedata"), "distinct gamedata sources should remain: $text")
+            assertEquals(3, count("code"), "code keeps two chunks per source plus distinct files: $text")
+            assertTrue(text.contains("docs:"), "diversified set should still keep a docs hit: $text")
+        } finally {
+            indexManager.closeAll()
+            testDb.close()
+        }
+    }
+
+
+    @Test
     fun `createServer registers all expected tool names`() {
         val mcpServer = server.createServer()
         val names = mcpServer.tools.keys
@@ -276,11 +429,14 @@ class HytaleKnowledgeServerTest {
     }
 
     @Test
-    fun `serviceForPatchline falls back to first service for unknown patchline`() {
+    fun `serviceForPatchline rejects unknown and traversal patchlines`() {
         val warning = StringBuilder()
-        val result = server.serviceForPatchline("unknown-patchline", warning)
-        assertNotNull(result)
-        assertTrue(warning.toString().contains("not loaded"), "Should mention not loaded in warning")
+        assertNull(server.serviceForPatchline("unknown-patchline", warning))
+        assertNull(server.serviceForPatchline("../etc/passwd"))
+        assertNull(server.serviceForPatchline("/tmp/x"))
+        assertNull(server.serviceForPatchline("foo/bar"))
+        assertNull(server.serviceForPatchline("foo\\bar"))
+        assertSame(server.serviceForPatchline("release"), server.serviceForPatchline("release"))
     }
 
     @Test
@@ -321,8 +477,7 @@ class HytaleKnowledgeServerTest {
         assertSame(preSvc, srv.serviceForPatchline("pre-release_b164_2026-07-23-ccc", warning))
         assertEquals("", warning.toString(), "a resolved slug should not emit a fallback warning")
         assertSame(preSvc, srv.serviceForPatchline("pre-release_b164", StringBuilder()))
-        assertSame(preSvc, srv.serviceForPatchline("pre-release@b999", StringBuilder()))
-
+        assertNull(srv.serviceForPatchline("pre-release@b999", StringBuilder()))
         relDb.close()
         preDb.close()
     }
@@ -1725,6 +1880,25 @@ class HytaleKnowledgeServerTest {
         assertFalse(text.contains("root:"), "must not leak file contents; got: $text")
         sdb.close()
     }
+
+    @Test
+    fun `get_hytale_source rejects an in-root symlink even if canonical target is inside`() = runBlocking {
+        val (sdb, srv) = sourceServer()
+        val tool = srv.createServer().tools["get_hytale_source"]!!
+        val sourceRoot = srv.sourceRootForPatchline("release")!!
+        val target = File(sourceRoot, "pkg/Foo.java")
+        val link = File(sourceRoot, "pkg/Alias.java")
+        java.nio.file.Files.createSymbolicLink(link.toPath(), target.toPath())
+        val result = tool.handler(callToolRequest("get_hytale_source", buildJsonObject {
+            put("path", "pkg/Alias.java")
+        }))
+        val text = (result.content.first() as io.modelcontextprotocol.kotlin.sdk.types.TextContent).text
+        assertTrue(result.isError == true, "symlink must be rejected; got: $text")
+        assertTrue(text.contains("symbolic link", ignoreCase = true) || text.contains("Invalid path") || text.contains("not found"), text)
+        assertFalse(text.contains("line 1 of Foo"), "must not leak symlink target contents; got: $text")
+        sdb.close()
+    }
+
 
     @Test
     fun `get_hytale_source returns a clear error for a missing file`() = runBlocking {

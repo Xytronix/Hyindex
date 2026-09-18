@@ -7,6 +7,7 @@ import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
+import java.io.File
 import java.time.Instant
 
 class DiffEngineSnapshotTest {
@@ -302,5 +303,28 @@ class DiffEngineSnapshotTest {
         assertTrue(md.contains("## docs"), "Should have a docs section")
         assertTrue(md.contains("New Title"), "Should report new title")
         assertTrue(md.contains("2026-02-02"), "Should report new published date")
+    }
+
+    @Test
+    fun `indexRoot refuses live db paths outside versions`() {
+        val root = Files.createTempDirectory("diff-root").toFile()
+        val outside = Files.createTempDirectory("diff-out").toFile()
+        val evil = outside.resolve("knowledge.db")
+        KnowledgeDatabase.forFile(evil).close()
+        val engine = DiffEngine()
+        assertThrows(IllegalArgumentException::class.java) {
+            engine.computeDiff("a", "b", evil, evil, indexRoot = root)
+        }
+        val versions = File(root, "versions/release").apply { mkdirs() }
+        val good = File(versions, "knowledge.db")
+        val db = KnowledgeDatabase.forFile(good)
+        db.execute(
+            "INSERT INTO nodes (id, node_type, display_name, file_path, corpus, content) VALUES ('n1', 'JavaClass', 'Ok', 'code/Ok.java', 'code', 'class Ok {}')",
+        )
+        db.close()
+        val ok = engine.computeDiff("a", "b", good, good, indexRoot = root)
+        assertEquals(0, ok.entries.size)
+        root.deleteRecursively()
+        outside.deleteRecursively()
     }
 }

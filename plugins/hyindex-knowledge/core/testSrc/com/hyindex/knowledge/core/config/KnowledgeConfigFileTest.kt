@@ -20,15 +20,25 @@ class KnowledgeConfigFileTest {
     @Test
     fun `writeToFile and loadFromFile round-trips correctly`() {
         val original = KnowledgeConfig(
-            embeddingProvider = "voyage",
-            embeddingBaseUrl = "https://api.voyageai.com",
-            embeddingApiKey = "test-api-key",
-            embeddingCodeModel = "voyage-code-3",
-            embeddingTextModel = "voyage-3-large",
-            embeddingDimensions = 1024,
+            embeddingProfiles = mapOf(
+                "voyage" to EmbeddingProfile(
+                    provider = "voyage",
+                    baseUrl = "https://api.voyageai.com",
+                    apiKey = "test-api-key",
+                    documentModel = "voyage-code-4",
+                    dimensions = 1024,
+                ),
+            ),
+            corpusEmbeddingProfiles = mapOf("code" to "voyage", "docs" to "voyage", "gamedata" to "voyage", "client" to "voyage"),
             indexPath = "/custom/index/path",
             resultsPerCorpus = 15,
             maxRelatedConnections = 8,
+            jevRoutingEnabled = true,
+            jevApiKey = "jev-test-key",
+            jevModel = "jev-latest",
+            jevBaseUrl = "https://api.typesafe.ai",
+            jevCorpusThreshold = 0.20,
+            routedCandidatesPerCorpus = 15,
         )
 
         val configFile = File(tempDir, "mcp-config.json")
@@ -36,42 +46,20 @@ class KnowledgeConfigFileTest {
 
         val loaded = KnowledgeConfig.loadFromFile(configFile)
         assertNotNull(loaded)
-        assertEquals(original.embeddingProvider, loaded!!.embeddingProvider)
-        assertEquals(original.embeddingBaseUrl, loaded.embeddingBaseUrl)
-        assertEquals(original.embeddingApiKey, loaded.embeddingApiKey)
-        assertEquals(original.embeddingCodeModel, loaded.embeddingCodeModel)
-        assertEquals(original.embeddingTextModel, loaded.embeddingTextModel)
-        assertEquals(original.embeddingDimensions, loaded.embeddingDimensions)
+        assertEquals(original.embeddingProfiles, loaded!!.embeddingProfiles)
+        assertEquals(original.corpusEmbeddingProfiles, loaded.corpusEmbeddingProfiles)
         assertEquals(original.indexPath, loaded.indexPath)
         assertEquals(original.resultsPerCorpus, loaded.resultsPerCorpus)
         assertEquals(original.maxRelatedConnections, loaded.maxRelatedConnections)
+        assertEquals(original.jevRoutingEnabled, loaded.jevRoutingEnabled)
+        assertEquals(original.jevApiKey, loaded.jevApiKey)
+        assertEquals(original.jevModel, loaded.jevModel)
+        assertEquals(original.jevBaseUrl, loaded.jevBaseUrl)
+        assertEquals(original.jevCorpusThreshold, loaded.jevCorpusThreshold)
+        assertEquals(original.routedCandidatesPerCorpus, loaded.routedCandidatesPerCorpus)
     }
 
-    @Test
-    fun `loadFromFile ignores unknown legacy keys`() {
-        val configFile = File(tempDir, "legacy.json")
-        configFile.writeText(
-            """
-            {
-              "embeddingProvider": "voyage",
-              "voyageApiKey": "legacy-key",
-              "voyageCodeModel": "legacy-code",
-              "voyageTextModel": "legacy-text",
-              "ollamaBaseUrl": "http://custom:11434",
-              "ollamaCodeModel": "legacy-ollama-code",
-              "ollamaTextModel": "legacy-ollama-text"
-            }
-            """.trimIndent(),
-        )
-        val loaded = KnowledgeConfig.loadFromFile(configFile)
-        val defaults = KnowledgeConfig()
-        assertNotNull(loaded)
-        assertEquals("voyage", loaded!!.embeddingProvider)
-        assertEquals(defaults.embeddingBaseUrl, loaded.embeddingBaseUrl)
-        assertEquals(defaults.embeddingApiKey, loaded.embeddingApiKey)
-        assertEquals(defaults.embeddingCodeModel, loaded.embeddingCodeModel)
-        assertEquals(defaults.embeddingTextModel, loaded.embeddingTextModel)
-    }
+
 
     @Test
     fun `loadFromFile returns null when file does not exist`() {
@@ -91,14 +79,12 @@ class KnowledgeConfigFileTest {
     @Test
     fun `loadFromFile populates defaults for missing fields`() {
         val configFile = File(tempDir, "partial.json")
-        configFile.writeText("""{ "embeddingProvider": "voyage" }""")
+        configFile.writeText("""{}""")
 
         val loaded = KnowledgeConfig.loadFromFile(configFile)
         assertNotNull(loaded)
         val defaults = KnowledgeConfig()
-        assertEquals("voyage", loaded!!.embeddingProvider)
-        assertEquals(defaults.embeddingBaseUrl, loaded.embeddingBaseUrl)
-        assertEquals(defaults.embeddingCodeModel, loaded.embeddingCodeModel)
+        assertEquals(defaults.embeddingProfiles, loaded!!.embeddingProfiles)
         assertEquals(defaults.resultsPerCorpus, loaded.resultsPerCorpus)
     }
 
@@ -134,37 +120,12 @@ class KnowledgeConfigFileTest {
     @Test
     fun `gitToken is null when absent from JSON file`() {
         val configFile = File(tempDir, "no-git-token.json")
-        configFile.writeText("""{ "embeddingProvider": "voyage" }""")
+        configFile.writeText("""{}""")
         val loaded = KnowledgeConfig.loadFromFile(configFile)
         assertNotNull(loaded)
         assertNull(loaded!!.gitToken)
     }
 
-    @Test
-    fun `gitRepoUrl defaults to HypixelStudios hytale-shared-source`() {
-        assertEquals(
-            "https://github.com/HypixelStudios/hytale-shared-source.git",
-            KnowledgeConfig().gitRepoUrl,
-        )
-    }
-
-    @Test
-    fun `gitRepoUrl round-trips from JSON file`() {
-        val configFile = File(tempDir, "git-repo.json")
-        configFile.writeText("""{ "gitRepoUrl": "https://example.com/hytale.git" }""")
-        val loaded = KnowledgeConfig.loadFromFile(configFile)
-        assertNotNull(loaded)
-        assertEquals("https://example.com/hytale.git", loaded!!.gitRepoUrl)
-    }
-
-    @Test
-    fun `gitRepoUrl applies default when absent from JSON file`() {
-        val configFile = File(tempDir, "no-git-repo.json")
-        configFile.writeText("""{ "embeddingProvider": "voyage" }""")
-        val loaded = KnowledgeConfig.loadFromFile(configFile)
-        assertNotNull(loaded)
-        assertEquals(KnowledgeConfig().gitRepoUrl, loaded!!.gitRepoUrl)
-    }
 
     @Test
     fun `gamedata ranking weights round-trip through writeToFile and loadFromFile`() {
@@ -183,7 +144,7 @@ class KnowledgeConfigFileTest {
     @Test
     fun `gamedata ranking weights apply defaults when absent from JSON file`() {
         val configFile = File(tempDir, "ranking-defaults.json")
-        configFile.writeText("""{ "embeddingProvider": "voyage" }""")
+        configFile.writeText("""{}""")
         val loaded = KnowledgeConfig.loadFromFile(configFile)
         assertNotNull(loaded)
         val defaults = KnowledgeConfig()
@@ -216,48 +177,35 @@ class KnowledgeConfigFileTest {
     }
 
     @Test
-    fun `reranker is disabled by default with rerank-2 dot 5 model`() {
+    fun `reranker is null by default`() {
         val config = KnowledgeConfig()
-        assertFalse(config.rerankerEnabled)
-        assertEquals("rerank-2.5", config.rerankerModel)
-        assertEquals(50, config.rerankerTopN)
+        assertNull(config.rerankerProfile)
     }
 
     @Test
     fun `reranker settings round-trip through writeToFile and loadFromFile`() {
         val configFile = File(tempDir, "reranker.json")
         val original = KnowledgeConfig(
-            rerankerEnabled = true,
-            rerankerModel = "rerank-2.5",
-            rerankerTopN = 25,
+            embeddingProfiles = mapOf("voyage" to EmbeddingProfile(provider = "voyage", apiKey = "embed-key", documentModel = "voyage-code-4")),
+            corpusEmbeddingProfiles = mapOf("code" to "voyage", "docs" to "voyage", "gamedata" to "voyage", "client" to "voyage"),
+            rerankerProfile = RerankerProfile(
+                provider = "voyage",
+                baseUrl = "https://rerank.example",
+                apiKey = "rerank-key",
+                model = "rerank-2.5",
+                topN = 25,
+            ),
         )
         KnowledgeConfig.writeToFile(original, configFile)
         val loaded = KnowledgeConfig.loadFromFile(configFile)
         assertNotNull(loaded)
-        assertTrue(loaded!!.rerankerEnabled)
-        assertEquals("rerank-2.5", loaded.rerankerModel)
-        assertEquals(25, loaded.rerankerTopN)
+        assertNotNull(loaded!!.rerankerProfile)
+        assertEquals("rerank-2.5", loaded.rerankerProfile!!.model)
+        assertEquals(25, loaded.rerankerProfile!!.topN)
+        assertEquals("https://rerank.example", loaded.rerankerProfile!!.baseUrl)
+        assertEquals("rerank-key", loaded.rerankerProfile!!.apiKey)
     }
 
-    @Test
-    fun `reranker settings parse from JSON file`() {
-        val configFile = File(tempDir, "reranker-json.json")
-        configFile.writeText("""{ "rerankerEnabled": true, "rerankerTopN": 30 }""")
-        val loaded = KnowledgeConfig.loadFromFile(configFile)
-        assertNotNull(loaded)
-        assertTrue(loaded!!.rerankerEnabled)
-        assertEquals(30, loaded.rerankerTopN)
-        assertEquals("rerank-2.5", loaded.rerankerModel)
-    }
-
-    @Test
-    fun `reranker disabled when absent from JSON file`() {
-        val configFile = File(tempDir, "reranker-absent.json")
-        configFile.writeText("""{ "embeddingProvider": "voyage" }""")
-        val loaded = KnowledgeConfig.loadFromFile(configFile)
-        assertNotNull(loaded)
-        assertFalse(loaded!!.rerankerEnabled)
-    }
 
     @Test
     fun `hybrid retrieval is enabled by default with RRF k 60`() {
@@ -292,7 +240,7 @@ class KnowledgeConfigFileTest {
     @Test
     fun `hybrid settings apply defaults when absent from JSON file`() {
         val configFile = File(tempDir, "hybrid-absent.json")
-        configFile.writeText("""{ "embeddingProvider": "voyage" }""")
+        configFile.writeText("""{}""")
         val loaded = KnowledgeConfig.loadFromFile(configFile)
         assertNotNull(loaded)
         assertTrue(loaded!!.hybridEnabled)

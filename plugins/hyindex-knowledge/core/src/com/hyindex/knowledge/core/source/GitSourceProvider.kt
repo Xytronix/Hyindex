@@ -9,7 +9,6 @@ import java.io.File
 import java.nio.file.Files
 import java.util.Base64
 
-
 object GitSourceProvider {
 
     const val DEFAULT_REPO_URL = "https://github.com/HypixelStudios/hytale-shared-source.git"
@@ -21,20 +20,31 @@ object GitSourceProvider {
 
     data class Prepared(val stageDir: File, val worktree: File, val version: HytaleVersionDetector.HytaleVersionInfo)
 
-    internal fun authArgs(token: String?): List<String> {
-        if (token == null) return emptyList()
+    @Volatile
+    internal var lastGitArgv: List<String> = emptyList()
+
+    internal fun authEnv(token: String?): Map<String, String> {
+        if (token.isNullOrEmpty()) return emptyMap()
         val basic = Base64.getEncoder().encodeToString(("x-access-token:$token").toByteArray())
-        return listOf("-c", "http.extraHeader=Authorization: Basic $basic")
+        return mapOf(
+            "GIT_CONFIG_COUNT" to "1",
+            "GIT_CONFIG_KEY_0" to "http.extraHeader",
+            "GIT_CONFIG_VALUE_0" to "Authorization: Basic $basic",
+            "GIT_TERMINAL_PROMPT" to "0",
+        )
     }
 
     private fun git(dir: File, vararg a: String, token: String? = null): String {
-        val p = ProcessBuilder(listOf("git") + authArgs(token) + a)
-            .directory(dir).redirectErrorStream(true).start()
-        val out = p.inputStream.bufferedReader().readText()
-        check(p.waitFor() == 0) { "git ${a.joinToString(" ")} failed: $out" }
+        val argv = listOf("git") + a.toList()
+        lastGitArgv = argv
+        val p = ProcessBuilder(argv).directory(dir).redirectErrorStream(true)
+        val env = p.environment()
+        env.putAll(authEnv(token))
+        val proc = p.start()
+        val out = proc.inputStream.bufferedReader().readText()
+        check(proc.waitFor() == 0) { "git ${a.joinToString(" ")} failed: $out" }
         return out.trim()
     }
-
 
     fun ensureClone(cacheBase: File, repoUrl: String, log: LogProvider, token: String? = null): File {
         val repo = File(cacheBase, "repo")
@@ -49,18 +59,14 @@ object GitSourceProvider {
         return repo
     }
 
-
     fun worktreeFor(repo: File, patchline: String, cacheBase: File, token: String? = null): File {
         val branch = PATCHLINE_BRANCH[patchline] ?: error("unknown patchline: $patchline")
         val wt = File(cacheBase, "worktrees/$patchline")
-
-
         runCatching { git(repo, "worktree", "remove", "--force", wt.absolutePath) }
         runCatching { git(repo, "worktree", "prune") }
         git(repo, "worktree", "add", "--force", "--detach", wt.absolutePath, "origin/$branch", token = token)
         return wt
     }
-
 
     fun deriveVersion(worktree: File, patchline: String): HytaleVersionDetector.HytaleVersionInfo {
         val full = git(worktree, "rev-parse", "HEAD")
@@ -84,33 +90,31 @@ object GitSourceProvider {
         return Prepared(stage, wt, version)
     }
 
-
     fun stageFlatRoot(worktree: File, stageDir: File): File {
         if (stageDir.exists()) stageDir.deleteRecursively()
         stageDir.mkdirs()
+        val wtCanon = worktree.canonicalFile
 
         val roots = buildList {
             worktree.walkTopDown()
-                .filter { it.isDirectory && it.invariantSeparatorsPath.endsWith("/src/main/java") }
+                .onEnter { dir -> dir == worktree || CanonicalRoots.isSafeDirectory(dir, wtCanon) }
+                .filter { it.isDirectory && !Files.isSymbolicLink(it.toPath()) && it.invariantSeparatorsPath.endsWith("/src/main/java") }
                 .forEach { add(it) }
             File(worktree, "HytaleServer/Protocol/target/generated-sources/java")
-                .takeIf { it.isDirectory }?.let { add(it) }
+                .takeIf { CanonicalRoots.isSafeDirectory(it, wtCanon) }?.let { add(it) }
         }
 
         for (root in roots) {
-            root.walkTopDown()
-                .filter { it.isFile && it.extension == "java" }
+            CanonicalRoots.walkSafeFiles(root)
+                .filter { it.extension == "java" }
                 .forEach { src ->
+                    if (!CanonicalRoots.isSafeRegularFile(src, wtCanon)) return@forEach
                     val rel = src.relativeTo(root).invariantSeparatorsPath
                     if (!rel.startsWith("com/")) return@forEach
                     val target = File(stageDir, rel)
                     target.parentFile.mkdirs()
                     if (target.exists()) return@forEach
-                    try {
-                        Files.createSymbolicLink(target.toPath(), src.toPath())
-                    } catch (_: Exception) {
-                        src.copyTo(target, overwrite = false)
-                    }
+                    src.copyTo(target, overwrite = false)
                 }
         }
         return stageDir

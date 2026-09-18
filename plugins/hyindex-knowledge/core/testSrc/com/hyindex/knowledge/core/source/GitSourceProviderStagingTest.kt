@@ -39,4 +39,20 @@ class GitSourceProviderStagingTest {
 
         wt.deleteRecursively(); stage.deleteRecursively()
     }
+
+    @Test
+    fun `does not stage outbound java symlink or recreate file symlinks`() {
+        val wt = Files.createTempDirectory("wt-link").toFile()
+        val outside = Files.createTempDirectory("secret-java").toFile()
+        val secret = File(outside, "Secret.java").apply { writeText("package com.hypixel.hytale; class Secret {}") }
+        write(wt, "Codec/src/main/java/com/hypixel/hytale/codec/Codec.java", "package com.hypixel.hytale.codec; class Codec {}")
+        val leak = File(wt, "Codec/src/main/java/com/hypixel/hytale/codec/Leak.java")
+        Files.createSymbolicLink(leak.toPath(), secret.toPath())
+        val stage = Files.createTempDirectory("stage-link").toFile()
+        GitSourceProvider.stageFlatRoot(wt, stage)
+        assertThat(File(stage, "com/hypixel/hytale/codec/Codec.java")).exists()
+        assertThat(Files.isSymbolicLink(File(stage, "com/hypixel/hytale/codec/Codec.java").toPath())).isFalse()
+        assertThat(File(stage, "com/hypixel/hytale/codec/Leak.java")).doesNotExist()
+        wt.deleteRecursively(); stage.deleteRecursively(); outside.deleteRecursively()
+    }
 }

@@ -1,8 +1,10 @@
 // Copyright 2026 Hyindex. All rights reserved.
 package com.hyindex.knowledge.cli
 
+import com.hyindex.knowledge.core.config.EmbeddingProfile
 import com.hyindex.knowledge.core.config.KnowledgeConfig
-import com.hyindex.knowledge.core.source.GitSourceProvider
+import com.hyindex.knowledge.core.config.RerankerProfile
+import com.hyindex.knowledge.core.db.Corpus
 import java.io.File
 
 data class InitArgs(
@@ -14,6 +16,10 @@ data class InitArgs(
     val codeModel: String? = null,
     val textModel: String? = null,
     val dimensions: Int? = null,
+    val rerankerProvider: String? = null,
+    val rerankerProtocol: String? = null,
+    val rerankerBaseUrl: String? = null,
+    val rerankerApiKey: String? = null,
     val rerankerModel: String? = null,
     val rerankerTopN: Int? = null,
     val nonInteractive: Boolean = false,
@@ -23,27 +29,22 @@ data class InitArgs(
         val USAGE = """
             Usage: java -jar hyindex-knowledge-indexer.jar init [options]
 
-              With a TTY, prompts for PAT, provider, embedding URL, API key,
-              code model, text model, optional dimensions, and optional reranker
-              (blank keeps the shown default / leaves empty).
-
-              --provider <name>        openai (default) | voyage | cohere | gemini | jina |
-                                       mistral | mixedbread | ollama | local | <any>
-                                       openai / any other name = OpenAI-compatible /v1/embeddings
-                                       voyage = Voyage protocol; cohere = Cohere /v1/embed
-                                       gemini = native Google :embedContent (or .../openai shim)
-                                       local requires optional hyindex-embeddings-local.jar
-              --git-token <token>      GitHub PAT for private shared-source (optional)
-              --embedding-url <url>    Embedding API base URL (optional; any endpoint for that protocol)
-              --api-key <key>          Embedding API key / token (optional)
-              --code-model <model>     Model for source-code embeddings (optional)
-              --text-model <model>     Model for docs / gamedata / UI chunk embeddings (optional)
-              --dimensions <n>         Optional output dimensions when the provider supports it
-              --reranker-model <model> Optional Voyage-compatible reranker model
-              --reranker-top-n <n>     Candidate pool when reranker is enabled (default 50)
-              --non-interactive        Never prompt; use flags / defaults only
-              --force                  Overwrite existing ~/.hyindex/knowledge/mcp-config.json
-              --help                   Show this help
+              --provider <name>             Embedding provider (default: openai)
+              --embedding-url <url>         Embedding API base URL
+              --api-key <key>               Embedding API key / token
+              --code-model <model>          Source-code embedding model
+              --text-model <model>          Docs / gamedata / UI embedding model
+              --dimensions <n>              Output dimensions when supported
+              --git-token <token>           GitHub PAT for private shared-source
+              --reranker-provider <name>    Voyage, Cohere, Jina, or a custom service
+              --reranker-protocol <name>    voyage | cohere | jina (required for custom providers)
+              --reranker-url <url>          Independent reranker API base URL
+              --reranker-api-key <key>      Independent reranker API key
+              --reranker-model <model>      Reranker model; omit to disable reranking
+              --reranker-top-n <n>          Candidate pool (default: 50)
+              --non-interactive             Never prompt; use flags / defaults only
+              --force                       Overwrite existing configuration
+              --help                        Show this help
         """.trimIndent()
 
         fun parse(args: List<String>): InitArgs {
@@ -55,44 +56,62 @@ data class InitArgs(
             var codeModel: String? = null
             var textModel: String? = null
             var dimensions: Int? = null
+            var rerankerProvider: String? = null
+            var rerankerProtocol: String? = null
+            var rerankerBaseUrl: String? = null
+            var rerankerApiKey: String? = null
             var rerankerModel: String? = null
             var rerankerTopN: Int? = null
             var nonInteractive = false
             var help = false
             var i = 0
             while (i < args.size) {
-                when (val a = args[i]) {
+                when (val arg = args[i]) {
                     "--force" -> force = true
                     "--help", "-h" -> help = true
                     "--non-interactive" -> nonInteractive = true
-                    "--provider" -> provider = args.getOrElse(++i) { error("missing value for --provider") }
-                    "--git-token" -> gitToken = args.getOrElse(++i) { error("missing value for --git-token") }
-                    "--embedding-url" -> embeddingBaseUrl = args.getOrElse(++i) { error("missing value for --embedding-url") }
-                    "--api-key" -> apiKey = args.getOrElse(++i) { error("missing value for --api-key") }
-                    "--code-model" -> codeModel = args.getOrElse(++i) { error("missing value for --code-model") }
-                    "--text-model" -> textModel = args.getOrElse(++i) { error("missing value for --text-model") }
-                    "--dimensions" -> dimensions = args.getOrElse(++i) { error("missing value for --dimensions") }.toInt()
-                    "--reranker-model" -> rerankerModel = args.getOrElse(++i) { error("missing value for --reranker-model") }
-                    "--reranker-top-n" -> rerankerTopN = args.getOrElse(++i) { error("missing value for --reranker-top-n") }.toInt()
-                    else -> error("unknown init arg: $a")
+                    "--provider" -> provider = args.valueAfter(++i, "--provider")
+                    "--git-token" -> gitToken = args.valueAfter(++i, "--git-token")
+                    "--embedding-url" -> embeddingBaseUrl = args.valueAfter(++i, "--embedding-url")
+                    "--api-key" -> apiKey = args.valueAfter(++i, "--api-key")
+                    "--code-model" -> codeModel = args.valueAfter(++i, "--code-model")
+                    "--text-model" -> textModel = args.valueAfter(++i, "--text-model")
+                    "--dimensions" -> dimensions = args.valueAfter(++i, "--dimensions").toInt()
+                    "--reranker-provider" -> rerankerProvider = args.valueAfter(++i, "--reranker-provider")
+                    "--reranker-protocol" -> rerankerProtocol = args.valueAfter(++i, "--reranker-protocol")
+                    "--reranker-url" -> rerankerBaseUrl = args.valueAfter(++i, "--reranker-url")
+                    "--reranker-api-key" -> rerankerApiKey = args.valueAfter(++i, "--reranker-api-key")
+                    "--reranker-model" -> rerankerModel = args.valueAfter(++i, "--reranker-model")
+                    "--reranker-top-n" -> rerankerTopN = args.valueAfter(++i, "--reranker-top-n").toInt()
+                    else -> error("unknown init arg: $arg")
                 }
                 i++
             }
             return InitArgs(
                 force = force,
-                provider = provider?.lowercase()?.ifBlank { null },
+                provider = provider.normalized(),
                 gitToken = gitToken,
                 embeddingBaseUrl = embeddingBaseUrl,
                 apiKey = apiKey,
-                codeModel = codeModel?.ifBlank { null },
-                textModel = textModel?.ifBlank { null },
+                codeModel = codeModel.nonBlank(),
+                textModel = textModel.nonBlank(),
                 dimensions = dimensions,
-                rerankerModel = rerankerModel?.ifBlank { null },
+                rerankerProvider = rerankerProvider.normalized(),
+                rerankerProtocol = rerankerProtocol.normalized(),
+                rerankerBaseUrl = rerankerBaseUrl,
+                rerankerApiKey = rerankerApiKey,
+                rerankerModel = rerankerModel.nonBlank(),
                 rerankerTopN = rerankerTopN,
                 nonInteractive = nonInteractive,
                 help = help,
             )
         }
+
+        private fun List<String>.valueAfter(index: Int, flag: String): String =
+            getOrElse(index) { error("missing value for $flag") }
+
+        private fun String?.normalized(): String? = nonBlank()?.lowercase()
+        private fun String?.nonBlank(): String? = this?.ifBlank { null }
     }
 }
 
@@ -111,8 +130,7 @@ fun runInit(args: List<String>) {
         return
     }
 
-    val answers = collectAnswers(opts)
-    val config = buildConfig(answers)
+    val config = buildConfig(collectAnswers(opts))
     KnowledgeConfig.writeToFile(config, configFile)
     println("Wrote ${configFile.absolutePath}")
     printNextSteps(configFile, config)
@@ -126,159 +144,266 @@ internal data class InitAnswers(
     val codeModel: String? = null,
     val textModel: String? = null,
     val dimensions: Int? = null,
+    val rerankerProvider: String? = null,
+    val rerankerProtocol: String? = null,
+    val rerankerBaseUrl: String? = null,
+    val rerankerApiKey: String? = null,
     val rerankerModel: String? = null,
     val rerankerTopN: Int? = null,
 )
 
-internal fun collectAnswers(opts: InitArgs): InitAnswers {
-    val interactive = opts.nonInteractive.not() && System.console() != null
-    val defaultProvider = opts.provider ?: "openai"
+internal data class ProviderDefaults(
+    val provider: String,
+    val baseUrl: String,
+    val codeModel: String,
+    val textModel: String,
+    val codeDimensions: Int?,
+    val textDimensions: Int?,
+    val imageModel: String? = null,
+    val imageDimensions: Int? = null,
+)
 
-    if (interactive.not()) {
+internal fun collectAnswers(opts: InitArgs): InitAnswers {
+    val interactive = !opts.nonInteractive && System.console() != null
+    val provider = opts.provider ?: "openai"
+    if (!interactive) {
         return InitAnswers(
-            provider = defaultProvider,
+            provider = provider,
             gitToken = opts.gitToken?.ifBlank { null },
-            embeddingBaseUrl = opts.embeddingBaseUrl ?: "",
-            apiKey = opts.apiKey ?: "",
+            embeddingBaseUrl = opts.embeddingBaseUrl.orEmpty(),
+            apiKey = opts.apiKey.orEmpty(),
             codeModel = opts.codeModel,
             textModel = opts.textModel,
             dimensions = opts.dimensions,
+            rerankerProvider = opts.rerankerProvider,
+            rerankerProtocol = opts.rerankerProtocol,
+            rerankerBaseUrl = opts.rerankerBaseUrl,
+            rerankerApiKey = opts.rerankerApiKey,
             rerankerModel = opts.rerankerModel,
             rerankerTopN = opts.rerankerTopN,
         )
     }
 
     println("Hyindex setup — leave blank to keep the default / leave empty.")
-    val gitToken = prompt("GitHub PAT / gitToken (optional)", opts.gitToken ?: "")
-    val provider = prompt(
+    val gitToken = prompt("GitHub PAT / gitToken (optional)", opts.gitToken.orEmpty())
+    val selectedProvider = prompt(
         "Embedding provider [openai|voyage|cohere|gemini|jina|mistral|mixedbread|ollama|local|<name>]",
-        defaultProvider,
+        provider,
     ).ifBlank { "openai" }.lowercase()
-    val urlDefault = opts.embeddingBaseUrl ?: defaultUrlFor(provider)
-    val embeddingBaseUrl = prompt("Embedding base URL (optional)", urlDefault)
-    val apiKey = prompt("Embedding API key / token (optional)", opts.apiKey ?: "")
-    val defaults = providerDefaults(provider, embeddingBaseUrl, apiKey, gitToken.ifBlank { null })
-    val codeModel = prompt(
-        "Code embedding model (source)",
-        opts.codeModel ?: defaults.embeddingCodeModel,
+    val embeddingBaseUrl = prompt(
+        "Embedding base URL",
+        opts.embeddingBaseUrl ?: defaultUrlFor(selectedProvider),
     )
-    val textModel = prompt(
-        "Text embedding model (docs / gamedata / UI chunks)",
-        opts.textModel ?: defaults.embeddingTextModel,
-    )
-    val dimDefault = (opts.dimensions ?: defaults.embeddingDimensions)?.toString() ?: ""
-    val dimensionsRaw = prompt("Embedding dimensions (optional)", dimDefault)
-    val dimensions = dimensionsRaw.ifBlank { null }?.toIntOrNull()
+    val apiKey = prompt("Embedding API key / token (optional)", opts.apiKey.orEmpty())
+    val defaults = providerDefaults(selectedProvider, embeddingBaseUrl)
+    val codeModel = prompt("Code embedding model", opts.codeModel ?: defaults.codeModel)
+    val textModel = prompt("Text embedding model", opts.textModel ?: defaults.textModel)
+    val dimensionDefault = opts.dimensions?.toString().orEmpty()
+    val dimensions = prompt("Embedding dimensions (optional)", dimensionDefault)
+        .ifBlank { null }
+        ?.toIntOrNull()
+
     val rerankerModel = prompt(
         "Reranker model (optional, blank = disabled)",
-        opts.rerankerModel ?: "",
+        opts.rerankerModel.orEmpty(),
     ).ifBlank { null }
-    val rerankerTopN = if (rerankerModel == null) {
-        null
-    } else {
-        val topDefault = (opts.rerankerTopN ?: 50).toString()
-        prompt("Reranker top-N candidate pool", topDefault).ifBlank { topDefault }.toIntOrNull()
+    var rerankerProvider = opts.rerankerProvider
+    var rerankerProtocol = opts.rerankerProtocol
+    var rerankerBaseUrl = opts.rerankerBaseUrl
+    var rerankerApiKey = opts.rerankerApiKey
+    var rerankerTopN = opts.rerankerTopN
+    if (rerankerModel != null) {
+        rerankerProvider = prompt("Reranker provider", rerankerProvider ?: "voyage")
+            .ifBlank { "voyage" }
+            .lowercase()
+        rerankerProtocol = prompt(
+            "Reranker protocol [voyage|cohere|jina]",
+            rerankerProtocol ?: defaultRerankerProtocolFor(rerankerProvider),
+        ).ifBlank { null }
+        rerankerBaseUrl = prompt(
+            "Reranker base URL",
+            rerankerBaseUrl ?: defaultRerankerUrlFor(rerankerProvider),
+        )
+        rerankerApiKey = prompt("Reranker API key (optional)", rerankerApiKey.orEmpty())
+        rerankerTopN = prompt("Reranker candidate pool", (rerankerTopN ?: 50).toString())
+            .toIntOrNull()
     }
+
     return InitAnswers(
-        provider = provider,
+        provider = selectedProvider,
         gitToken = gitToken.ifBlank { null },
         embeddingBaseUrl = embeddingBaseUrl,
         apiKey = apiKey,
         codeModel = codeModel.ifBlank { null },
         textModel = textModel.ifBlank { null },
         dimensions = dimensions,
+        rerankerProvider = rerankerProvider,
+        rerankerProtocol = rerankerProtocol,
+        rerankerBaseUrl = rerankerBaseUrl,
+        rerankerApiKey = rerankerApiKey,
         rerankerModel = rerankerModel,
         rerankerTopN = rerankerTopN,
     )
 }
 
-internal fun buildConfig(a: InitAnswers): KnowledgeConfig {
-    val base = providerDefaults(a.provider, a.embeddingBaseUrl, a.apiKey, a.gitToken)
-    val rerankerModel = a.rerankerModel?.ifBlank { null }
-    return base.copy(
-        embeddingCodeModel = a.codeModel?.ifBlank { null } ?: base.embeddingCodeModel,
-        embeddingTextModel = a.textModel?.ifBlank { null } ?: base.embeddingTextModel,
-        embeddingDimensions = a.dimensions ?: base.embeddingDimensions,
-        rerankerEnabled = rerankerModel != null,
-        rerankerModel = rerankerModel ?: base.rerankerModel,
-        rerankerTopN = a.rerankerTopN ?: base.rerankerTopN,
+internal fun buildConfig(answers: InitAnswers): KnowledgeConfig {
+    val defaults = providerDefaults(answers.provider, answers.embeddingBaseUrl)
+    val code = EmbeddingProfile(
+        provider = defaults.provider,
+        baseUrl = defaults.baseUrl,
+        apiKey = answers.apiKey,
+        documentModel = answers.codeModel ?: defaults.codeModel,
+        dimensions = answers.dimensions ?: defaults.codeDimensions,
+        concurrency = 4,
     )
-}
+    val text = EmbeddingProfile(
+        provider = defaults.provider,
+        baseUrl = defaults.baseUrl,
+        apiKey = answers.apiKey,
+        documentModel = answers.textModel ?: defaults.textModel,
+        dimensions = answers.dimensions ?: defaults.textDimensions,
+        concurrency = 4,
+    )
+    val profiles = linkedMapOf("code" to code, "text" to text)
+    val assignments = linkedMapOf(
+        Corpus.CODE.id to "code",
+        Corpus.DOCS.id to "text",
+        Corpus.GAMEDATA.id to "text",
+        Corpus.CLIENT.id to "text",
+    )
+    defaults.imageModel?.let { imageModel ->
+        profiles["visual"] = EmbeddingProfile(
+            provider = defaults.provider,
+            baseUrl = defaults.baseUrl,
+            apiKey = answers.apiKey,
+            documentModel = imageModel,
+            dimensions = answers.dimensions ?: defaults.imageDimensions,
+            concurrency = 4,
+        )
+        assignments[Corpus.VISUAL.id] = "visual"
+    }
 
-internal fun providerDefaults(
-    provider: String,
-    embeddingBaseUrl: String,
-    apiKey: String,
-    gitToken: String?,
-): KnowledgeConfig {
-    val base = KnowledgeConfig(
-        embeddingProvider = provider,
-        gitRepoUrl = GitSourceProvider.DEFAULT_REPO_URL,
-        gitToken = gitToken,
-        embeddingApiKey = apiKey,
-        embeddingBaseUrl = embeddingBaseUrl,
-    )
-    return when (provider.lowercase()) {
-        "ollama" -> base.copy(
-            embeddingBaseUrl = embeddingBaseUrl.ifBlank { "http://localhost:11434" },
-            embeddingCodeModel = "qwen3-embedding:8b",
-            embeddingTextModel = "nomic-embed-text-v2-moe",
-        )
-        "voyage" -> base.copy(
-            embeddingBaseUrl = embeddingBaseUrl.ifBlank { "https://api.voyageai.com" },
-            embeddingCodeModel = "voyage-code-3",
-            embeddingTextModel = "voyage-4-large",
-        )
-        "cohere" -> base.copy(
-            embeddingBaseUrl = embeddingBaseUrl.ifBlank { "https://api.cohere.com" },
-            embeddingCodeModel = "embed-v4.0",
-            embeddingTextModel = "embed-v4.0",
-        )
-        "gemini" -> base.copy(
-            embeddingBaseUrl = embeddingBaseUrl.ifBlank {
-                "https://generativelanguage.googleapis.com/v1beta"
-            },
-            embeddingCodeModel = "gemini-embedding-001",
-            embeddingTextModel = "gemini-embedding-001",
-        )
-        "jina" -> base.copy(
-            embeddingBaseUrl = embeddingBaseUrl.ifBlank { "https://api.jina.ai" },
-            embeddingCodeModel = "jina-embeddings-v3",
-            embeddingTextModel = "jina-embeddings-v3",
-            embeddingDimensions = 1024,
-        )
-        "mistral" -> base.copy(
-            embeddingBaseUrl = embeddingBaseUrl.ifBlank { "https://api.mistral.ai" },
-            embeddingCodeModel = "codestral-embed-2505",
-            embeddingTextModel = "mistral-embed",
-        )
-        "mixedbread", "mxbai" -> base.copy(
-            embeddingProvider = "mixedbread",
-            embeddingBaseUrl = embeddingBaseUrl.ifBlank { "https://api.mixedbread.ai" },
-            embeddingCodeModel = "mxbai-embed-large",
-            embeddingTextModel = "mxbai-embed-large",
-        )
-        "local" -> base.copy(
-            embeddingBaseUrl = embeddingBaseUrl,
-        )
-        else -> base.copy(
-            embeddingBaseUrl = embeddingBaseUrl,
-            embeddingCodeModel = "text-embedding-3-large",
-            embeddingTextModel = "text-embedding-3-large",
+    val reranker = answers.rerankerModel?.let { model ->
+        val provider = answers.rerankerProvider?.ifBlank { null } ?: "voyage"
+        RerankerProfile(
+            provider = provider,
+            baseUrl = answers.rerankerBaseUrl?.ifBlank { null } ?: defaultRerankerUrlFor(provider),
+            apiKey = answers.rerankerApiKey.orEmpty(),
+            model = model,
+            protocol = answers.rerankerProtocol.orEmpty(),
+            topN = answers.rerankerTopN ?: 50,
         )
     }
+
+    return KnowledgeConfig(
+        embeddingProfiles = profiles,
+        corpusEmbeddingProfiles = assignments,
+        gitToken = answers.gitToken,
+        rerankerProfile = reranker,
+    )
 }
 
-internal fun defaultUrlFor(provider: String): String = when (provider.lowercase()) {
-    "ollama" -> "http://localhost:11434"
+internal fun providerDefaults(provider: String, baseUrl: String = ""): ProviderDefaults =
+    when (provider.lowercase()) {
+        "ollama" -> ProviderDefaults(
+            "ollama",
+            baseUrl.ifBlank { "http://localhost:11434" },
+            "qwen3-embedding:8b",
+            "nomic-embed-text-v2-moe",
+            4096,
+            768,
+        )
+        "voyage" -> ProviderDefaults(
+            "voyage",
+            baseUrl.ifBlank { "https://api.voyageai.com" },
+            "voyage-code-4",
+            "voyage-4-large",
+            1024,
+            1024,
+            "voyage-multimodal-3.5",
+            1024,
+        )
+        "cohere" -> ProviderDefaults(
+            "cohere",
+            baseUrl.ifBlank { "https://api.cohere.com" },
+            "embed-v4.0",
+            "embed-v4.0",
+            1024,
+            1024,
+        )
+        "gemini" -> ProviderDefaults(
+            "gemini",
+            baseUrl.ifBlank { "https://generativelanguage.googleapis.com/v1beta" },
+            "gemini-embedding-2",
+            "gemini-embedding-2",
+            1024,
+            1024,
+            "gemini-embedding-2",
+            1024,
+        )
+        "jina" -> ProviderDefaults(
+            "jina",
+            baseUrl.ifBlank { "https://api.jina.ai" },
+            "jina-embeddings-v3",
+            "jina-embeddings-v3",
+            1024,
+            1024,
+        )
+        "mistral" -> ProviderDefaults(
+            "mistral",
+            baseUrl.ifBlank { "https://api.mistral.ai" },
+            "codestral-embed-2505",
+            "mistral-embed",
+            1536,
+            1024,
+        )
+        "mixedbread", "mxbai" -> ProviderDefaults(
+            "mixedbread",
+            baseUrl.ifBlank { "https://api.mixedbread.ai" },
+            "mxbai-embed-large",
+            "mxbai-embed-large",
+            1024,
+            1024,
+        )
+        "local" -> ProviderDefaults(
+            "local",
+            baseUrl,
+            "all-minilm-l6-v2-q",
+            "all-minilm-l6-v2-q",
+            384,
+            384,
+        )
+        "openai" -> ProviderDefaults(
+            "openai",
+            baseUrl.ifBlank { "https://api.openai.com" },
+            "text-embedding-3-large",
+            "text-embedding-3-large",
+            3072,
+            3072,
+        )
+        else -> ProviderDefaults(
+            provider,
+            baseUrl,
+            "text-embedding-3-large",
+            "text-embedding-3-large",
+            null,
+            null,
+        )
+    }
+
+internal fun defaultUrlFor(provider: String): String = providerDefaults(provider).baseUrl
+
+internal fun defaultRerankerProtocolFor(provider: String): String = when (provider.lowercase()) {
+    "voyage" -> "voyage"
+    "cohere" -> "cohere"
+    "jina" -> "jina"
+    else -> ""
+}
+
+internal fun defaultRerankerUrlFor(provider: String): String = when (provider.lowercase()) {
     "voyage" -> "https://api.voyageai.com"
     "cohere" -> "https://api.cohere.com"
-    "gemini" -> "https://generativelanguage.googleapis.com/v1beta"
     "jina" -> "https://api.jina.ai"
-    "mistral" -> "https://api.mistral.ai"
-    "mixedbread", "mxbai" -> "https://api.mixedbread.ai"
-    "local" -> ""
-    "openai" -> "https://api.openai.com"
     else -> ""
 }
 
@@ -286,37 +411,31 @@ private fun prompt(label: String, default: String): String {
     val suffix = if (default.isEmpty()) "" else " [$default]"
     print("$label$suffix: ")
     System.out.flush()
-    val line = readlnOrNull() ?: ""
+    val line = readlnOrNull().orEmpty()
     return if (line.isEmpty()) default else line
 }
 
 private fun printNextSteps(configFile: File, config: KnowledgeConfig) {
+    val code = config.resolvedEmbeddingProfile(Corpus.CODE)
     println()
     println("Config:")
-    println("  gitRepoUrl         = ${config.gitRepoUrl}")
     println("  gitToken           = ${if (config.gitToken.isNullOrBlank()) "(empty)" else "(set)"}")
-    println("  embeddingProvider  = ${config.embeddingProvider}")
-    println("  embeddingBaseUrl   = ${config.embeddingBaseUrl.ifBlank { "(empty)" }}")
-    println("  embeddingApiKey    = ${if (config.embeddingApiKey.isBlank()) "(empty)" else "(set)"}")
-    println("  code/text models   = ${config.embeddingCodeModel} / ${config.embeddingTextModel}")
-    println("  dimensions         = ${config.embeddingDimensions ?: "(default)"}")
-    println("  reranker           = ${if (config.rerankerEnabled) "${config.rerankerModel} (topN=${config.rerankerTopN})" else "(disabled)"}")
+    println("  embedding profiles = ${config.embeddingProfiles.keys.joinToString(",")}")
+    println("  corpus profiles    = ${config.corpusEmbeddingProfiles.entries.joinToString(",") { "${it.key}:${it.value}" }}")
+    println("  reranker           = ${config.rerankerProfile?.let { "${it.provider}:${it.model} (topN=${it.topN})" } ?: "(disabled)"}")
     println("  index path         = ${config.resolvedBasePath().absolutePath}")
     println()
     println("Next:")
-    when (config.embeddingProvider.lowercase()) {
-        "local" -> println("  - put hyindex-embeddings-local.jar on the classpath (./gradlew :embeddings-local:shadowJar)")
-        "ollama" -> {
-            println("  - ensure Ollama is running at ${config.embeddingBaseUrl.ifBlank { "http://localhost:11434" }}")
-            println("  - pull models: ${config.embeddingCodeModel} and ${config.embeddingTextModel}")
-        }
-        "voyage" -> println("  - Voyage uses /v1/embeddings (+ /v1/contextualizedembeddings for voyage-context-*)")
-        "cohere" -> println("  - Cohere uses /v1/embed with input_type + embeddingApiKey")
-        "gemini" -> println("  - Gemini uses native :embedContent (or .../openai OpenAI-compatible shim)")
-        "jina" -> println("  - Jina uses /v1/embeddings with task + late_chunking")
-        "mistral", "mixedbread", "mxbai" -> println("  - OpenAI-compatible /v1/embeddings at provider base URL")
-        else -> println("  - OpenAI-compatible /v1/embeddings at embeddingBaseUrl (blank → https://api.openai.com)")
+    when (code.provider.lowercase()) {
+        "local" -> println("  - put hyindex-embeddings-local.jar on the classpath")
+        "ollama" -> println("  - ensure Ollama is running at ${code.baseUrl} and pull the configured models")
+        "voyage" -> println("  - Voyage uses /v1/embeddings and contextualized embeddings when configured")
+        "cohere" -> println("  - Cohere uses /v1/embed with input_type")
+        "gemini" -> println("  - Gemini uses native :embedContent or its OpenAI-compatible shim")
+        "jina" -> println("  - Jina uses /v1/embeddings with task and late_chunking")
+        else -> println("  - ${code.provider} uses an OpenAI-compatible /v1/embeddings endpoint")
     }
+    println("  - Edit:   ${configFile.absolutePath}")
     println("  - Index:  java -jar hyindex-knowledge-indexer.jar --patchline release")
     println("  - Serve:  java -jar hyindex-knowledge-mcp.jar")
 }

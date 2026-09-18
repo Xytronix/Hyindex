@@ -1,14 +1,46 @@
 {
-  "embeddingProvider": "voyage",
-  "embeddingBaseUrl": "https://api.voyageai.com",
-  "embeddingApiKey": "",
-  "embeddingCodeModel": "voyage-code-3",
-  "embeddingTextModel": "voyage-4-large",
-  "embeddingDimensions": null,
-  "rerankerEnabled": false,
-  "rerankerModel": "rerank-2.5",
-  "rerankerTopN": 50,
-  "gitRepoUrl": "https://github.com/HypixelStudios/hytale-shared-source.git",
+  "embeddingProfiles": {
+    "code": {
+      "provider": "voyage",
+      "baseUrl": "https://api.voyageai.com",
+      "apiKey": "",
+      "documentModel": "voyage-code-4",
+      "queryModel": "voyage-code-4",
+      "dimensions": 1024,
+      "concurrency": 4
+    },
+    "text": {
+      "provider": "voyage",
+      "baseUrl": "https://api.voyageai.com",
+      "apiKey": "",
+      "documentModel": "voyage-4-large",
+      "queryModel": "voyage-4-large",
+      "dimensions": 1024,
+      "concurrency": 4
+    }
+  },
+  "corpusEmbeddingProfiles": {
+    "code": "code",
+    "docs": "text",
+    "gamedata": "text",
+    "client": "text"
+  },
+  "visualRasterRoot": "",
+  "rerankerProfile": {
+    "provider": "voyage",
+    "baseUrl": "https://api.voyageai.com",
+    "endpoint": "/v1/rerank",
+    "apiKey": "",
+    "model": "rerank-2.5",
+    "protocol": "voyage",
+    "topN": 50
+  },
+  "jevRoutingEnabled": false,
+  "jevApiKey": "",
+  "jevModel": "jev-latest",
+  "jevBaseUrl": "https://api.typesafe.ai",
+  "jevCorpusThreshold": 0.20,
+  "routedCandidatesPerCorpus": 15,
   "gitToken": null,
   "activeVersion": null,
   "retentionCount": 3

@@ -3,6 +3,7 @@ package com.hyindex.knowledge.extraction
 
 import java.io.File
 import java.security.MessageDigest
+import com.hyindex.knowledge.core.source.CanonicalRoots
 
 enum class ClientUIType(val id: String) {
     XAML("xaml"),
@@ -69,7 +70,7 @@ object ClientUIParser {
     }
 
 
-    private const val MAX_CONTENT_CHARS = 1200
+    private const val MAX_CONTENT_CHARS = 32_000
 
 
     fun derivePurpose(name: String): String? {
@@ -105,18 +106,19 @@ object ClientUIParser {
         val chunks = mutableListOf<ClientUIChunk>()
         val errors = mutableListOf<String>()
 
-        val files = clientDataPath.walkTopDown()
-            .filter { it.isFile && isIndexableClientFile(it.path) }
+        val files = CanonicalRoots.walkSafeFiles(clientDataPath)
+            .filter { isIndexableClientFile(it.path) }
             .toList()
 
         for ((idx, file) in files.withIndex()) {
             onProgress?.invoke(idx + 1, files.size, file.name)
             try {
                 val type = getUIType(file.absolutePath) ?: continue
+                val relativePath = file.relativeTo(clientDataPath).path.replace('\\', '/')
                 val content = file.readText(Charsets.UTF_8)
                 if (content.isBlank()) continue
 
-                val relativePath = file.relativeTo(clientDataPath).path.replace('\\', '/')
+
                 val name = file.nameWithoutExtension
                 val category = extractCategory(relativePath)
                 val hash = computeSHA256(content.toByteArray())

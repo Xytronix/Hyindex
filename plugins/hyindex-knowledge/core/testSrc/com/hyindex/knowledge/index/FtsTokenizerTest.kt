@@ -66,7 +66,7 @@ class FtsTokenizerTest {
 
     @Test fun `fts row count matches embedded node count per corpus`() {
         val base = Files.createTempDirectory("hyindex-fts-count").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val docs = Files.createTempDirectory("hyindex-fts-docroot").toFile()
         java.io.File(docs, "a.md").writeText("# A\n\nFirst doc body.\n")
         java.io.File(docs, "b.md").writeText("# B\n\nSecond doc body.\n")

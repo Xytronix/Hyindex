@@ -15,7 +15,7 @@ import java.nio.file.Files
 class ClientUiIndexerTest {
     @Test fun `skips cleanly when client folder is absent`() {
         val base = Files.createTempDirectory("hyindex-client").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val log = StdoutLogProvider
         val db = KnowledgeDatabase.forFile(java.io.File(cfg.resolvedIndexPath(), "knowledge.db"), log)
         val cache = EmbeddingCacheService(EmbeddingCacheDatabase.forFile(java.io.File(base, "embedding-cache.db"), log), log)
@@ -27,7 +27,7 @@ class ClientUiIndexerTest {
 
     @Test fun `indexes UI and sibling NodeEditor json, excluding fonts theme language and Licenses`() {
         val base = Files.createTempDirectory("hyindex-client2").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val client = java.io.File(cfg.resolvedIndexPath(), "ClientRoot/Client")
         val dataDir = java.io.File(client, "Data")
 
@@ -66,7 +66,7 @@ class ClientUiIndexerTest {
 
     @Test fun `incremental change re-embeds all chunks so the HNSW stays complete`() {
         val base = Files.createTempDirectory("hyindex-client3").toFile()
-        val cfg = KnowledgeConfig(embeddingProvider = "fake", indexPath = base.absolutePath, activeVersion = "release_0.5.2")
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath, activeVersion = "release_0.5.2")
         val dataDir = java.io.File(cfg.resolvedIndexPath(), "Client/Data/Shared/UI")
         dataDir.mkdirs()
         java.io.File(dataDir, "A.xaml").writeText("<Grid/>")

@@ -177,4 +177,20 @@ class GameDataParserTreeTest {
 
         File(root.toString()).deleteRecursively()
     }
+
+    @Test
+    fun `tree parse skips outbound json symlink`() {
+        val root = Files.createTempDirectory("assets-link")
+        val item = root.resolve(entryPath)
+        Files.createDirectories(item.parent)
+        Files.writeString(item, itemJson)
+        val outside = Files.createTempDirectory("secret-json")
+        val secret = outside.resolve("Secret.json")
+        Files.writeString(secret, """{"TranslationProperties":{"Name":"leaked"}}""")
+        Files.createSymbolicLink(root.resolve("Server/Item/Items/Leak.json"), secret)
+        val result = GameDataParser.parseAssetsTree(root)
+        assertThat(result.chunks.map { it.id }.joinToString()).doesNotContain("Leak")
+        File(root.toString()).deleteRecursively()
+        File(outside.toString()).deleteRecursively()
+    }
 }

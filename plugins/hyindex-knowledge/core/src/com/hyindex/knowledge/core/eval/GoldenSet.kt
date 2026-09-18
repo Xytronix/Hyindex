@@ -6,11 +6,20 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 @Serializable
+data class GradedJudgment(
+    val id: String,
+    val grade: Int,
+)
+
+@Serializable
 data class GoldenQuery(
     val tool: String,
     val query: String,
     val expectedIds: List<String>,
     val patchline: String? = null,
+    val intent: String? = null,
+    val expectedCorpora: List<String>? = null,
+    val judgments: List<GradedJudgment>? = null,
 )
 
 object GoldenSet {
@@ -27,9 +36,12 @@ object GoldenSet {
 
     fun load(path: String): List<GoldenQuery> = parse(File(path).readText())
 
-    fun loadSeed(): List<GoldenQuery> {
-        val stream = GoldenSet::class.java.getResourceAsStream(SEED_RESOURCE)
-            ?: error("seed golden set not found on classpath at $SEED_RESOURCE")
+    fun loadSeed(): List<GoldenQuery> = loadResource(SEED_RESOURCE)
+
+
+    private fun loadResource(resource: String): List<GoldenQuery> {
+        val stream = GoldenSet::class.java.getResourceAsStream(resource)
+            ?: error("golden set not found on classpath at $resource")
         return parse(stream.bufferedReader().use { it.readText() })
     }
 }

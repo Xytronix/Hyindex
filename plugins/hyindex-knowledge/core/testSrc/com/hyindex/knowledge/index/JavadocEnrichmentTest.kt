@@ -22,11 +22,8 @@ class JavadocEnrichmentTest {
 
     private fun indexDemo(): List<String?> {
         val base = Files.createTempDirectory("hyindex-jd").toFile()
-        val cfg = KnowledgeConfig(
-            embeddingProvider = "fake",
-            indexPath = base.absolutePath,
-            activeVersion = "release_0.5.2",
-        )
+        val cfg = KnowledgeConfig(embeddingProfiles = mapOf("fake" to com.hyindex.knowledge.core.config.EmbeddingProfile("fake", documentModel = "fake")), corpusEmbeddingProfiles = com.hyindex.knowledge.core.db.Corpus.entries.associate { it.id to "fake" }, indexPath = base.absolutePath,
+        activeVersion = "release_0.5.2",)
         val decompiled = cfg.resolvedIndexPath().resolve("decompiled/com/hypixel/hytale/Demo.java")
         decompiled.parentFile.mkdirs()
         decompiled.writeText(

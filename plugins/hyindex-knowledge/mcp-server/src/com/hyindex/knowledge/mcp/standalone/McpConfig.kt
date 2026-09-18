@@ -7,32 +7,25 @@ import java.io.File
 object McpConfig {
     fun load(): KnowledgeConfig {
         val base = KnowledgeConfig.loadFromFile() ?: KnowledgeConfig()
+        val reranker = base.rerankerProfile?.let { profile ->
+            profile.copy(
+                provider = env("HYINDEX_RERANKER_PROVIDER") ?: profile.provider,
+                baseUrl = env("HYINDEX_RERANKER_BASE_URL") ?: profile.baseUrl,
+                endpoint = env("HYINDEX_RERANKER_ENDPOINT") ?: profile.endpoint,
+                apiKey = env("HYINDEX_RERANKER_API_KEY") ?: profile.apiKey,
+                model = env("HYINDEX_RERANKER_MODEL") ?: profile.model,
+                protocol = env("HYINDEX_RERANKER_PROTOCOL") ?: profile.protocol,
+                topN = env("HYINDEX_RERANKER_TOP_N")?.toIntOrNull() ?: profile.topN,
+            )
+        }
         return base.copy(
-            embeddingProvider = env("HYINDEX_EMBEDDING_PROVIDER") ?: base.embeddingProvider,
-            embeddingBaseUrl = env("HYINDEX_EMBEDDING_BASE_URL")
-                ?: env("HYINDEX_OLLAMA_URL")
-                ?: base.embeddingBaseUrl,
-            embeddingApiKey = env("HYINDEX_EMBEDDING_API_KEY")
-                ?: env("OPENAI_API_KEY")
-                ?: env("VOYAGE_API_KEY")
-                ?: env("COHERE_API_KEY")
-                ?: env("GEMINI_API_KEY")
-                ?: env("GOOGLE_API_KEY")
-                ?: base.embeddingApiKey,
-            embeddingCodeModel = env("HYINDEX_EMBEDDING_CODE_MODEL")
-                ?: env("HYINDEX_VOYAGE_CODE_MODEL")
-                ?: env("HYINDEX_OLLAMA_CODE_MODEL")
-                ?: base.embeddingCodeModel,
-            embeddingTextModel = env("HYINDEX_EMBEDDING_TEXT_MODEL")
-                ?: env("HYINDEX_VOYAGE_TEXT_MODEL")
-                ?: env("HYINDEX_OLLAMA_TEXT_MODEL")
-                ?: base.embeddingTextModel,
-            embeddingDimensions = env("HYINDEX_EMBEDDING_DIMENSIONS")?.toIntOrNull() ?: base.embeddingDimensions,
+            visualRasterRoot = env("HYINDEX_VISUAL_RASTER_ROOT") ?: base.visualRasterRoot,
             indexPath = env("HYINDEX_INDEX_PATH") ?: base.indexPath,
             activeVersion = env("HYINDEX_ACTIVE_VERSION") ?: base.activeVersion,
             snippetMaxLength = env("HYINDEX_MCP_SNIPPET_MAX")?.toIntOrNull() ?: base.snippetMaxLength,
             nodeContentMaxLength = env("HYINDEX_MCP_NODE_CONTENT_MAX")?.toIntOrNull() ?: base.nodeContentMaxLength,
             sourceMaxChars = env("HYINDEX_MCP_SOURCE_MAX")?.toIntOrNull() ?: base.sourceMaxChars,
+            rerankerProfile = reranker,
         )
     }
 
@@ -42,4 +35,5 @@ object McpConfig {
 
     private fun env(name: String): String? =
         System.getenv(name)?.takeIf { it.isNotBlank() }
+
 }

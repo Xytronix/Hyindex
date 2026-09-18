@@ -8,6 +8,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.security.MessageDigest
 import java.time.Duration
+import com.hyindex.knowledge.core.source.CanonicalRoots
 
 enum class DocsType(val id: String) {
     GUIDE("guide"),
@@ -353,8 +354,8 @@ object DocsParser {
         val validRoots = roots.filter { it.isDirectory }
         val files = validRoots
             .flatMap { root ->
-                root.walkTopDown()
-                    .filter { it.isFile && (it.extension == "md" || it.extension == "mdx") }
+                CanonicalRoots.walkSafeFiles(root)
+                    .filter { it.extension == "md" || it.extension == "mdx" }
                     .filterNot { isExcludedDocPath(it.relativeTo(root).path.replace(java.io.File.separatorChar, '/')) }
                     .map { root to it }
             }

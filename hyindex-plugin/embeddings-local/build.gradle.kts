@@ -13,7 +13,7 @@ java {
 }
 
 dependencies {
-    // Optional classpath plugin for embeddingProvider=local (ONNX all-MiniLM-L6-v2-q)
+    // Optional classpath plugin for profiles using provider=local (ONNX all-MiniLM-L6-v2-q)
     implementation(libs.langchain4j.embeddings.minilm)
 }
 

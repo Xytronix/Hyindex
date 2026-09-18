@@ -9,11 +9,10 @@ class McpConfigTest {
     @Test
     fun `load returns defaults when no config file or env vars exist`() {
         val config = McpConfig.load()
-        assertEquals("openai", config.embeddingProvider)
-        assertEquals("", config.embeddingBaseUrl)
-        assertEquals("text-embedding-3-large", config.embeddingCodeModel)
-        assertEquals("text-embedding-3-large", config.embeddingTextModel)
-        assertNull(config.embeddingDimensions)
+        assertFalse(config.embeddingProfiles.isEmpty())
+        assertEquals("openai", config.embeddingProfiles["code"]?.provider)
+        assertEquals("text-embedding-3-large", config.embeddingProfiles["code"]?.documentModel)
+        assertNull(config.rerankerProfile)
         assertEquals(10, config.resultsPerCorpus)
         assertEquals(5, config.maxRelatedConnections)
     }

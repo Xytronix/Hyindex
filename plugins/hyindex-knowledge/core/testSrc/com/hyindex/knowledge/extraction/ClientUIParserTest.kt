@@ -46,4 +46,37 @@ class ClientUIParserTest {
 
         assertTrue(ClientUIParser.isIndexableClientFile("Client/Data/Game/Interface/Common/ColorOptionGrid/Grid.ui"))
     }
+
+    @Test
+    fun `embedding text retains the tail of official-sized ui files`() {
+        val marker = "TAIL_BINDING_MARKER"
+        val content = "x".repeat(30_000) + marker
+        val chunk = ClientUIChunk(
+            id = "ui:Custom/Common.ui",
+            type = ClientUIType.UI,
+            name = "Common",
+            filePath = "/tmp/Common.ui",
+            relativePath = "Custom/Common.ui",
+            fileHash = "hash",
+            content = content,
+            category = "Common",
+            textForEmbedding = "",
+        )
+
+        assertTrue(ClientUIParser.buildEmbeddingText(chunk).contains(marker))
+    }
+
+    @Test
+    fun `parseClientData skips outbound ui symlink`() {
+        val root = java.nio.file.Files.createTempDirectory("client-link").toFile()
+        val ui = java.io.File(root, "Hud.ui")
+        ui.writeText("<Page Name=\"Hud\"></Page>")
+        val outside = java.nio.file.Files.createTempDirectory("secret-ui").toFile()
+        val secret = java.io.File(outside, "Secret.ui").apply { writeText("<Page Name=\"SecretLeak\"></Page>") }
+        java.nio.file.Files.createSymbolicLink(java.io.File(root, "Leak.ui").toPath(), secret.toPath())
+        val result = ClientUIParser.parseClientData(root)
+        assertTrue(result.chunks.none { it.name.contains("Secret") || it.content.contains("SecretLeak") })
+        assertTrue(result.chunks.any { it.name == "Hud" })
+        root.deleteRecursively(); outside.deleteRecursively()
+    }
 }

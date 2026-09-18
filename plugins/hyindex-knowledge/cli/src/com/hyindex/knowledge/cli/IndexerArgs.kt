@@ -23,13 +23,13 @@ data class IndexerArgs(
               java -jar hyindex-knowledge-indexer.jar [options]        # build indexes
               java -jar hyindex-knowledge-indexer.jar eval [options]   # run golden-set eval
 
-            The Hytale source repo defaults to:
+            The Hytale source repository is:
               https://github.com/HypixelStudios/hytale-shared-source.git
-            Override with "gitRepoUrl" / authenticate with "gitToken" in mcp-config.json.
+            Authenticate private access with "gitToken" in mcp-config.json.
 
             Options:
               --patchline <name>    release | pre-release | all          (default: all)
-              --corpus <list>       code,gamedata,client,docs            (default: all)
+              --corpus <list>       code,gamedata,client,docs[,visual]   (default: four text corpora; visual is opt-in)
               --docs-source <list>  modding,blog,support,server | all     (default: all)
               --force               re-clone/re-index, ignore caches
               --reembed             re-embed the EXISTING index in place (apply a config change

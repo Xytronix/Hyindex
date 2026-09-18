@@ -1,8 +1,9 @@
 // Copyright 2026 Hyindex. All rights reserved.
 package com.hyindex.knowledge.core.embedding
 
+import com.hyindex.knowledge.core.config.EmbeddingProfile
 import com.hyindex.knowledge.core.config.KnowledgeConfig
-import com.hyindex.knowledge.core.db.EmbeddingPurpose
+import com.hyindex.knowledge.core.db.Corpus
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -13,7 +14,7 @@ class LocalEmbeddingProviderTest {
     @Test
     fun `local provider reports missing plugin when onnx jar absent`() {
         if (LocalEmbeddingProvider.pluginAvailable()) return
-        val provider = EmbeddingProvider.fromConfig(KnowledgeConfig(embeddingProvider = "local"), EmbeddingPurpose.CODE)
+        val provider = EmbeddingProvider.fromConfig(KnowledgeConfig(embeddingProfiles = mapOf("local" to EmbeddingProfile("local", documentModel = "local")), corpusEmbeddingProfiles = mapOf("code" to "local", "docs" to "local", "gamedata" to "local", "client" to "local")), Corpus.CODE)
         assertTrue(provider is LocalEmbeddingProvider)
         val ex = assertThrows(IllegalStateException::class.java) {
             runBlocking { provider.validate() }
