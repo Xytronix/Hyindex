@@ -178,6 +178,20 @@ class HytaleKnowledgeServerTest {
     }
 
     @Test
+    fun `search_hytale_docs source official returns official shape on empty db`() = runBlocking {
+        val mcpServer = server.createServer()
+        val tool = mcpServer.tools["search_hytale_docs"]!!
+        val result = tool.handler(callToolRequest("search_hytale_docs", buildJsonObject {
+            put("query", "how to create an asset pack")
+            put("source", "official")
+        }))
+
+        assertNull(result.isError)
+        val text = (result.content.first() as io.modelcontextprotocol.kotlin.sdk.types.TextContent).text
+        assertTrue(text.contains("resultCount: 0"), "official source should return the empty docs shape; got: $text")
+    }
+
+    @Test
     fun `search_hytale globally reranks candidates from every corpus`() = runBlocking {
         val indexDir = Files.createTempDirectory("global_rerank_").toFile()
         indexDir.deleteOnExit()

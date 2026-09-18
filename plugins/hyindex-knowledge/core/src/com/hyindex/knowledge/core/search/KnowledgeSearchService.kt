@@ -575,7 +575,7 @@ class KnowledgeSearchService(
 
     private companion object {
         private val RERANK_BOILERPLATE = Regex(
-            "(?im)^(?:Hytale Modding Docs:|Type:|// Package:|// Class:|Purpose:|Corpus:).*\\R?",
+            "(?im)^(?:(?:Official Hytale (?:Docs|Blog|Support|Shared Source)|HytaleModding Community Docs|Hytale Modding Docs):|Type:|// Package:|// Class:|Purpose:|Corpus:).*\\R?",
         )
         private val GAMEDATA_INTENT_RULES = listOf(
             Regex("\\b(craft|recipe|crafting|bench|smelt|cook|brew)s?\\b", RegexOption.IGNORE_CASE) to setOf("recipe", "item"),

@@ -137,8 +137,16 @@ object DocsParser {
 
 
     fun buildEmbeddingText(chunk: DocsChunk): String {
+        val sourceLabel = when (chunk.id.substringBefore(':')) {
+            "official" -> "Official Hytale Docs"
+            "blog" -> "Official Hytale Blog"
+            "support" -> "Official Hytale Support"
+            "repo" -> "Official Hytale Shared Source"
+            "modding" -> "HytaleModding Community Docs"
+            else -> "Hytale Documentation"
+        }
         return buildString {
-            append("Hytale Modding Docs: ${chunk.title}")
+            append("$sourceLabel: ${chunk.title}")
             append("\nType: ${chunk.type.id}")
             chunk.category?.let { append("\nCategory: $it") }
             chunk.description?.let { append("\nDescription: $it") }
@@ -391,11 +399,11 @@ object DocsParser {
     }
 
     private fun sourceForRoot(root: java.io.File): String {
-        val p = root.absolutePath
+        val p = root.absolutePath.replace(java.io.File.separatorChar, '/')
         return when {
+            p.contains("/official-docs/") -> "official"
             p.contains("/cache/support") -> "support"
             p.contains("/cache/blog")    -> "blog"
-            p.contains("/re-docs")        -> "re"
             p.contains("/worktrees/")     -> "repo"
             else -> "local"
         }

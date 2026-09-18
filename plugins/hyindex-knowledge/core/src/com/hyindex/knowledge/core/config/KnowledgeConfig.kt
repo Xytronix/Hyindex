@@ -45,6 +45,9 @@ data class KnowledgeConfig(
     val docsGithubRepo: String = "HytaleModding/site",
     val docsGithubBranch: String = "main",
     val docsLanguage: String = "en",
+    val indexPatchlines: List<String> = DEFAULT_INDEX_PATCHLINES,
+    val enabledCorpora: List<String> = DEFAULT_ENABLED_CORPORA,
+    val docsSources: List<String> = DEFAULT_DOCS_SOURCES,
 
     val snippetMaxLength: Int = 1500,
     val nodeContentMaxLength: Int = 8000,
@@ -126,6 +129,27 @@ data class KnowledgeConfig(
     fun resolvedDimensions(corpus: Corpus): Int? =
         resolvedEmbeddingProfile(corpus).dimensions
 
+    fun resolvedIndexPatchlines(): Set<String> {
+        val resolved = indexPatchlines.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+        val unknown = resolved - INDEX_PATCHLINE_IDS
+        require(unknown.isEmpty()) { "Unknown indexPatchlines: $unknown" }
+        return resolved
+    }
+
+    fun resolvedEnabledCorpora(): Set<String> {
+        val resolved = enabledCorpora.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+        val unknown = resolved - CORPUS_IDS
+        require(unknown.isEmpty()) { "Unknown enabledCorpora: $unknown" }
+        return resolved
+    }
+
+    fun resolvedDocsSources(): Set<String> {
+        val resolved = docsSources.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+        val unknown = resolved - DOCS_SOURCE_IDS
+        require(unknown.isEmpty()) { "Unknown docsSources: $unknown" }
+        return resolved
+    }
+
     fun resolvedIndexPath(): File {
         val base = if (indexPath.isNotBlank()) File(indexPath) else defaultBasePath()
         if (activeVersion.isNotBlank()) return File(base, "versions/$activeVersion")
@@ -143,11 +167,20 @@ data class KnowledgeConfig(
     }
 
     companion object {
+        val DEFAULT_INDEX_PATCHLINES: List<String> = listOf("release", "pre-release")
+        val INDEX_PATCHLINE_IDS: Set<String> = DEFAULT_INDEX_PATCHLINES.toSet()
+        val DEFAULT_ENABLED_CORPORA: List<String> = listOf("code", "gamedata", "client", "docs")
+        val CORPUS_IDS: Set<String> = Corpus.entries.mapTo(linkedSetOf(), Corpus::id)
+
+        val DEFAULT_DOCS_SOURCES: List<String> =
+            listOf("official", "modding", "blog", "support", "server")
+        val DOCS_SOURCE_IDS: Set<String> = DEFAULT_DOCS_SOURCES.toSet()
+
         private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
         fun configFilePath(): File {
             val home = System.getProperty("user.home")
-            return Paths.get(home, ".hyindex", "knowledge", "mcp-config.json").toFile()
+            return Paths.get(home, ".hyindex", "knowledge", "config.json").toFile()
         }
 
         fun writeToFile(config: KnowledgeConfig, file: File = configFilePath()) {
@@ -162,6 +195,9 @@ data class KnowledgeConfig(
                 docsGithubRepo = config.docsGithubRepo,
                 docsGithubBranch = config.docsGithubBranch,
                 docsLanguage = config.docsLanguage,
+                indexPatchlines = config.indexPatchlines,
+                enabledCorpora = config.enabledCorpora,
+                docsSources = config.docsSources,
                 snippetMaxLength = config.snippetMaxLength,
                 nodeContentMaxLength = config.nodeContentMaxLength,
                 sourceMaxChars = config.sourceMaxChars,
@@ -212,6 +248,9 @@ data class KnowledgeConfig(
                     docsGithubRepo = fc.docsGithubRepo ?: defaults.docsGithubRepo,
                     docsGithubBranch = fc.docsGithubBranch ?: defaults.docsGithubBranch,
                     docsLanguage = fc.docsLanguage ?: defaults.docsLanguage,
+                    indexPatchlines = fc.indexPatchlines ?: defaults.indexPatchlines,
+                    enabledCorpora = fc.enabledCorpora ?: defaults.enabledCorpora,
+                    docsSources = fc.docsSources ?: defaults.docsSources,
                     snippetMaxLength = fc.snippetMaxLength ?: defaults.snippetMaxLength,
                     nodeContentMaxLength = fc.nodeContentMaxLength ?: defaults.nodeContentMaxLength,
                     sourceMaxChars = fc.sourceMaxChars ?: defaults.sourceMaxChars,
@@ -260,6 +299,9 @@ data class KnowledgeConfig(
         val docsGithubRepo: String? = null,
         val docsGithubBranch: String? = null,
         val docsLanguage: String? = null,
+        val indexPatchlines: List<String>? = null,
+        val enabledCorpora: List<String>? = null,
+        val docsSources: List<String>? = null,
         val snippetMaxLength: Int? = null,
         val nodeContentMaxLength: Int? = null,
         val sourceMaxChars: Int? = null,

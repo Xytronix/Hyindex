@@ -122,11 +122,13 @@ fun main(args: Array<String>) {
     val baseConfig = KnowledgeConfig.loadFromFile() ?: KnowledgeConfig()
     val log = StdoutLogProvider
     val baseDir = baseConfig.resolvedBasePath()
-    val corpora = opts.corpora
+    val patchlines = IndexerArgs.resolvePatchlines(opts, baseConfig)
+    val corpora = IndexerArgs.resolveCorpora(opts, baseConfig)
+    val docsSources = IndexerArgs.resolveDocsSources(opts, baseConfig)
 
     var hadError = false
 
-    for (patchline in opts.patchlines) {
+    for (patchline in patchlines) {
         if (opts.reembed) {
             val slug = VersionResolver.latestSlug(baseDir, patchline) ?: run {
                 log.warn("--reembed: no existing index for $patchline — skipping")
@@ -221,16 +223,25 @@ fun main(args: Array<String>) {
 
         val docRoots = buildList {
             if ("docs" in corpora) {
-                if ("server" in opts.docsSources) gitPrepared?.worktree?.let { add(it) }
-                if ("support" in opts.docsSources)
+                if ("server" in docsSources) gitPrepared?.worktree?.let { add(it) }
+                if ("support" in docsSources)
                     runCatching { com.hyindex.knowledge.core.source.SupportDocsSource.fetchInto(File(baseDir, "cache"), log, force = opts.force) }.getOrNull()?.let { add(it) }
-                if ("blog" in opts.docsSources)
+                if ("blog" in docsSources)
                     runCatching { com.hyindex.knowledge.core.source.BlogDocsSource.fetchInto(File(baseDir, "cache"), log, force = opts.force) }.getOrNull()?.let { add(it) }
-                File(baseDir, "re-docs").takeIf { it.isDirectory }?.let { add(it) }
+                if ("official" in docsSources)
+                    runCatching {
+                        com.hyindex.knowledge.core.source.OfficialDocsSource.fetchInto(
+                            File(baseDir, "cache"),
+                            patchline,
+                            log,
+                        )
+                    }.onFailure { log.warn("official docs failed for $patchline: ${it.message}") }
+                        .getOrNull()
+                        ?.let { add(it) }
             }
         }
 
-        val includeGithubDocs = ("docs" in corpora) && ("modding" in opts.docsSources)
+        val includeGithubDocs = ("docs" in corpora) && ("modding" in docsSources)
 
         val db = KnowledgeDatabase.forFile(File(cfg.resolvedIndexPath(), "knowledge.db"), log)
         val cache = EmbeddingCacheService(EmbeddingCacheDatabase.forFile(File(baseDir, "embedding-cache.db"), log), log)

@@ -41,7 +41,7 @@ class VisualCorpusTest {
     @Test
     fun `config file loads visual raster root and image model without changing text models`() {
         val dir = Files.createTempDirectory("hyindex-visual-cfg").toFile()
-        val file = File(dir, "mcp-config.json")
+        val file = File(dir, "config.json")
         file.writeText(
             """
             {

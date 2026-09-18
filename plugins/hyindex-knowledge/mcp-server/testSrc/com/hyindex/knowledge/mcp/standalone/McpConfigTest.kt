@@ -21,8 +21,8 @@ class McpConfigTest {
     fun `configFilePath points to hyindex knowledge directory`() {
         val path = McpConfig.configFilePath().absolutePath
         assertTrue(
-            path.contains(".hyindex") && path.contains("knowledge") && path.endsWith("mcp-config.json"),
-            "Config path should be ~/.hyindex/knowledge/mcp-config.json, got: $path"
+            path.contains(".hyindex") && path.contains("knowledge") && path.endsWith("config.json"),
+            "Config path should be ~/.hyindex/knowledge/config.json, got: $path"
         )
     }
 }

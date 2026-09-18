@@ -371,15 +371,16 @@ class HytaleKnowledgeServer(
     private fun searchDocsTool(): RegisteredTool {
         val tool = Tool(
             name = "search_hytale_docs",
-            description = "Search Hytale documentation using semantic search: modding guides, blog posts / patch notes, and support articles. " +
-                "Pick the 'source' to match intent: patch notes / changelog / release notes / 'what changed in this update' -> source=\"blog\" (optionally sort=\"recency\" for newest first); " +
-                "modding guides / tutorials / API reference (plugin development, ECS, blocks, commands, events) -> source=\"modding\"; " +
-                "support / help / troubleshooting articles -> source=\"support\"; reverse-engineering notes -> source=\"re\"; search every source -> source=\"all\" (default). " +
+            description = "Search Hytale documentation using semantic search across official product docs, source-repository docs, community guides, blog posts / patch notes, and support articles. " +
+                "Pick the 'source' to match intent: official Hytale product documentation -> source=\"official\"; exact patchline source-repository READMEs -> source=\"repo\"; " +
+                "patch notes / changelog / release notes / 'what changed in this update' -> source=\"blog\" (optionally sort=\"recency\" for newest first); " +
+                "community modding guides / tutorials -> source=\"modding\"; support / help / troubleshooting articles -> source=\"support\"; " +
+                "search every source -> source=\"all\" (default). " +
                 "Use the 'sort' param to order results: relevance (default) | recency (newest published first). " +
                 "Use the 'patchline' param to target a specific patchline (release|pre-release, default release).",
             inputSchema = toolSchema(
                 "query" to propString("Natural language question about Hytale modding"),
-                "source" to propString("Filter by doc source: blog, modding, support, re, or all (default all)"),
+                "source" to propString("Filter by doc source: official, repo, blog, modding, support, or all (default all)"),
                 "type" to propString("Filter by documentation type"),
                 "limit" to propInt("Number of results to return (default 5, max 20)"),
                 "expand" to propBool("Enable graph expansion to find related code and game data (default false)"),

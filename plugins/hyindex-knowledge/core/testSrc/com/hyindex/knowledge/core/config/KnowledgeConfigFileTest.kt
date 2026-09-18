@@ -33,6 +33,9 @@ class KnowledgeConfigFileTest {
             indexPath = "/custom/index/path",
             resultsPerCorpus = 15,
             maxRelatedConnections = 8,
+            indexPatchlines = listOf("release"),
+            enabledCorpora = listOf("code", "docs"),
+            docsSources = listOf("official", "server"),
             jevRoutingEnabled = true,
             jevApiKey = "jev-test-key",
             jevModel = "jev-latest",
@@ -41,7 +44,7 @@ class KnowledgeConfigFileTest {
             routedCandidatesPerCorpus = 15,
         )
 
-        val configFile = File(tempDir, "mcp-config.json")
+        val configFile = File(tempDir, "config.json")
         KnowledgeConfig.writeToFile(original, configFile)
 
         val loaded = KnowledgeConfig.loadFromFile(configFile)
@@ -51,12 +54,36 @@ class KnowledgeConfigFileTest {
         assertEquals(original.indexPath, loaded.indexPath)
         assertEquals(original.resultsPerCorpus, loaded.resultsPerCorpus)
         assertEquals(original.maxRelatedConnections, loaded.maxRelatedConnections)
+        assertEquals(original.indexPatchlines, loaded.indexPatchlines)
+        assertEquals(original.enabledCorpora, loaded.enabledCorpora)
+        assertEquals(original.docsSources, loaded.docsSources)
         assertEquals(original.jevRoutingEnabled, loaded.jevRoutingEnabled)
         assertEquals(original.jevApiKey, loaded.jevApiKey)
         assertEquals(original.jevModel, loaded.jevModel)
         assertEquals(original.jevBaseUrl, loaded.jevBaseUrl)
         assertEquals(original.jevCorpusThreshold, loaded.jevCorpusThreshold)
         assertEquals(original.routedCandidatesPerCorpus, loaded.routedCandidatesPerCorpus)
+    }
+
+    @Test
+    fun `indexing selections normalize and reject unknown values`() {
+        val config = KnowledgeConfig(
+            indexPatchlines = listOf(" Release "),
+            enabledCorpora = listOf(" CODE ", "visual", "code"),
+            docsSources = listOf(" Official ", "BLOG", "official"),
+        )
+        assertEquals(setOf("release"), config.resolvedIndexPatchlines())
+        assertEquals(setOf("code", "visual"), config.resolvedEnabledCorpora())
+        assertEquals(setOf("official", "blog"), config.resolvedDocsSources())
+        assertThrows(IllegalArgumentException::class.java) {
+            KnowledgeConfig(indexPatchlines = listOf("nightly")).resolvedIndexPatchlines()
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            KnowledgeConfig(enabledCorpora = listOf("unknown")).resolvedEnabledCorpora()
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            KnowledgeConfig(docsSources = listOf("official", "unknown")).resolvedDocsSources()
+        }
     }
 
 
@@ -251,8 +278,8 @@ class KnowledgeConfigFileTest {
     fun `configFilePath points to hyindex knowledge directory`() {
         val path = KnowledgeConfig.configFilePath().absolutePath
         assertTrue(
-            path.contains(".hyindex") && path.contains("knowledge") && path.endsWith("mcp-config.json"),
-            "Config path should be ~/.hyindex/knowledge/mcp-config.json, got: $path"
+            path.contains(".hyindex") && path.contains("knowledge") && path.endsWith("config.json"),
+            "Config path should be ~/.hyindex/knowledge/config.json, got: $path"
         )
     }
 

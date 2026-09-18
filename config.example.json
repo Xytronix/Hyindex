@@ -25,6 +25,9 @@
     "gamedata": "text",
     "client": "text"
   },
+  "indexPatchlines": ["release", "pre-release"],
+  "enabledCorpora": ["code", "gamedata", "client", "docs"],
+  "docsSources": ["official", "modding", "blog", "support", "server"],
   "visualRasterRoot": "",
   "rerankerProfile": {
     "provider": "voyage",

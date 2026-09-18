@@ -66,7 +66,7 @@ class DocsIndexer(
 
         if (ctx.progress.isCanceled) return IndexResult("docs", 0, false, "canceled")
 
-        val priority = listOf("repo", "modding", "support", "blog", "re", "local")
+        val priority = listOf("official", "repo", "modding", "support", "blog", "local")
         fun rank(id: String) = priority.indexOf(id.substringBefore(':')).let { if (it < 0) priority.size else it }
         val deduped = allChunks
             .sortedBy { rank(it.id) }

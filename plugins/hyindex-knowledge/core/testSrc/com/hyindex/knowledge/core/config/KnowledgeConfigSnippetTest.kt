@@ -11,7 +11,7 @@ class KnowledgeConfigSnippetTest {
 
     @Test fun roundTripsThroughFile() {
         val dir = Files.createTempDirectory("kcfg").toFile()
-        val file = java.io.File(dir, "mcp-config.json")
+        val file = java.io.File(dir, "config.json")
         try {
             KnowledgeConfig.writeToFile(KnowledgeConfig(snippetMaxLength = 2222), file)
             val loaded = KnowledgeConfig.loadFromFile(file)!!

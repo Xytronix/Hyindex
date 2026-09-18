@@ -28,15 +28,17 @@ java -jar hyindex-knowledge-indexer.jar init --non-interactive \
 
 Re-running the indexer only processes changed files. Use `--force` for a full rebuild. Hyindex checks out `HypixelStudios/hytale-shared-source` and rejects symlinks that escape the source tree.
 
+Documentation indexing includes the patchline-matched official Hytale portal (`docs.hytale.com` or `pre-release.docs.hytale.com`), official source-repository notes, HytaleModding guides, the Hytale blog, and support articles. Persistent indexing defaults live in `config.json` as `indexPatchlines`, `enabledCorpora`, and `docsSources`; explicit `--patchline`, `--corpus`, or `--docs-source` arguments override them for one run.
+
 ## Configuration
 
 Runtime configuration lives at:
 
 ```text
-~/.hyindex/knowledge/mcp-config.json
+~/.hyindex/knowledge/config.json
 ```
 
-The `init` command creates it. The complete template is [`mcp-config.example.json`](mcp-config.example.json).
+The `init` command creates it. The complete template is [`config.example.json`](config.example.json).
 
 Embeddings use named profiles mapped to corpora:
 

@@ -1,5 +1,6 @@
 // Copyright 2026 Hyindex. All rights reserved.
 package com.hyindex.knowledge.cli
+import com.hyindex.knowledge.core.config.KnowledgeConfig
 
 data class IndexerArgs(
     val patchlines: Set<String>,
@@ -9,11 +10,14 @@ data class IndexerArgs(
     val reembed: Boolean = false,
     val allowClear: Boolean = false,
     val help: Boolean = false,
+    val patchlinesExplicit: Boolean = false,
+    val corporaExplicit: Boolean = false,
+    val docsSourcesExplicit: Boolean = false,
 ) {
     companion object {
-        private val ALL_PATCHLINES = setOf("release", "pre-release")
-        private val ALL_CORPORA = setOf("code", "gamedata", "client", "docs")
-        private val DOCS_SOURCES = setOf("modding", "blog", "support", "server")
+        private val ALL_PATCHLINES = KnowledgeConfig.INDEX_PATCHLINE_IDS
+        private val ALL_CORPORA = KnowledgeConfig.DEFAULT_ENABLED_CORPORA.toSet()
+        private val DOCS_SOURCES = KnowledgeConfig.DOCS_SOURCE_IDS
 
         val USAGE = """
             Hyindex Knowledge Indexer
@@ -25,12 +29,12 @@ data class IndexerArgs(
 
             The Hytale source repository is:
               https://github.com/HypixelStudios/hytale-shared-source.git
-            Authenticate private access with "gitToken" in mcp-config.json.
+            Authenticate private access with "gitToken" in config.json.
 
             Options:
-              --patchline <name>    release | pre-release | all          (default: all)
-              --corpus <list>       code,gamedata,client,docs[,visual]   (default: four text corpora; visual is opt-in)
-              --docs-source <list>  modding,blog,support,server | all     (default: all)
+              --patchline <name>    release | pre-release | all          (default: config.json)
+              --corpus <list>       code,gamedata,client,docs[,visual]   (default: config.json)
+              --docs-source <list>  official,modding,blog,support,server | all   (default: config.json)
               --force               re-clone/re-index, ignore caches
               --reembed             re-embed the EXISTING index in place (apply a config change
                                     such as a new model); skips source fetch and the version-change
@@ -41,7 +45,7 @@ data class IndexerArgs(
               -h, --help            show this help and exit
 
             Examples:
-              # First-time setup (writes ~/.hyindex/knowledge/mcp-config.json)
+              # First-time setup (writes ~/.hyindex/knowledge/config.json)
               java -jar hyindex-knowledge-indexer.jar init
 
               # Reindex only the pre-release patchline
@@ -72,15 +76,37 @@ data class IndexerArgs(
                     else -> error("unknown arg: $k")
                 }; i++
             }
+            val patchlinesExplicit = m.containsKey("--patchline")
             val patch = when (val p = m["--patchline"]) { null, "all" -> ALL_PATCHLINES; else -> setOf(p) }
-            val corpora = m["--corpus"]?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: ALL_CORPORA
+                .also { selected ->
+                    val unknown = selected - KnowledgeConfig.INDEX_PATCHLINE_IDS
+                    check(unknown.isEmpty()) { "bad --patchline: $unknown" }
+                }
+            val corporaExplicit = m.containsKey("--corpus")
+            val corpora = m["--corpus"]?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
+                ?: ALL_CORPORA
+            val unknownCorpora = corpora - KnowledgeConfig.CORPUS_IDS
+            check(unknownCorpora.isEmpty()) { "bad --corpus: $unknownCorpora" }
+            val docsSourcesExplicit = m.containsKey("--docs-source")
             val docsSources = when (val v = m["--docs-source"]) {
                 null, "all" -> DOCS_SOURCES
                 else -> v.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet().also {
                     val bad = it - DOCS_SOURCES - "all"; check(bad.isEmpty()) { "bad --docs-source: $bad" }
                 }.let { if ("all" in it) DOCS_SOURCES else it }
             }
-            return IndexerArgs(patch, corpora, docsSources, force, reembed, allowClear, help)
+            return IndexerArgs(
+                patch, corpora, docsSources, force, reembed, allowClear, help,
+                patchlinesExplicit, corporaExplicit, docsSourcesExplicit,
+            )
         }
+
+        fun resolvePatchlines(args: IndexerArgs, config: KnowledgeConfig): Set<String> =
+            if (args.patchlinesExplicit) args.patchlines else config.resolvedIndexPatchlines()
+
+        fun resolveCorpora(args: IndexerArgs, config: KnowledgeConfig): Set<String> =
+            if (args.corporaExplicit) args.corpora else config.resolvedEnabledCorpora()
+
+        fun resolveDocsSources(args: IndexerArgs, config: KnowledgeConfig): Set<String> =
+            if (args.docsSourcesExplicit) args.docsSources else config.resolvedDocsSources()
     }
 }
