@@ -74,4 +74,57 @@ class BuildAllIndexerTest {
         db.close()
         base.deleteRecursively()
     }
+    @Test fun `failed corpus invalidates previous completion metadata before any indexing`() {
+        val base = Files.createTempDirectory("hyindex-failed-meta").toFile()
+        val cfg = KnowledgeConfig(indexPath = base.absolutePath, activeVersion = "release_test")
+        val log = StdoutLogProvider
+        val db = KnowledgeDatabase.forFile(java.io.File(cfg.resolvedIndexPath(), "knowledge.db"), log)
+        val cache = EmbeddingCacheService(EmbeddingCacheDatabase.forFile(java.io.File(base, "embedding-cache.db"), log), log)
+        val ctx = IndexContext(cfg, db, cache, log, NoopProgressReporter)
+        val info = HytaleVersionDetector.HytaleVersionInfo("release", "", "", "revision", "test")
+        val meta = java.io.File(ctx.indexDir, "version_meta.json")
+        meta.parentFile.mkdirs()
+        meta.writeText("previous complete generation")
+        var markerWasPresentDuringIndexing: Boolean? = null
+        val failing = object : com.hyindex.knowledge.core.index.CorpusIndexer {
+            override val corpus = "failing"
+            override fun index(ctx: IndexContext): com.hyindex.knowledge.core.index.IndexResult {
+                markerWasPresentDuringIndexing = meta.exists()
+                throw IllegalStateException("intentional corpus failure")
+            }
+        }
+
+        val results = BuildAllIndexer(ctx, emptyList(), info, setOf("failing"), false)
+            .run(force = true, extraPlugins = listOf(failing))
+
+        assertEquals(false, markerWasPresentDuringIndexing)
+        assertEquals("intentional corpus failure", results.single().error)
+        assertTrue(!meta.exists(), "failed generation must not retain a completion marker")
+        db.close()
+        base.deleteRecursively()
+    }
+
+    @Test fun `returned corpus error does not publish a completion marker`() {
+        val base = Files.createTempDirectory("hyindex-error-meta").toFile()
+        val cfg = KnowledgeConfig(indexPath = base.absolutePath, activeVersion = "release_test")
+        val log = StdoutLogProvider
+        val db = KnowledgeDatabase.forFile(java.io.File(cfg.resolvedIndexPath(), "knowledge.db"), log)
+        val cache = EmbeddingCacheService(EmbeddingCacheDatabase.forFile(java.io.File(base, "embedding-cache.db"), log), log)
+        val ctx = IndexContext(cfg, db, cache, log, NoopProgressReporter)
+        val info = HytaleVersionDetector.HytaleVersionInfo("release", "", "", "revision", "test")
+        val failing = object : com.hyindex.knowledge.core.index.CorpusIndexer {
+            override val corpus = "failing"
+            override fun index(ctx: IndexContext) = com.hyindex.knowledge.core.index.IndexResult(
+                corpus, 0, skipped = false, error = "returned failure")
+        }
+
+        val results = BuildAllIndexer(ctx, emptyList(), info, setOf("failing"), false)
+            .run(extraPlugins = listOf(failing))
+
+        assertEquals("returned failure", results.single().error)
+        assertTrue(!java.io.File(ctx.indexDir, "version_meta.json").exists())
+        db.close()
+        base.deleteRecursively()
+    }
+
 }

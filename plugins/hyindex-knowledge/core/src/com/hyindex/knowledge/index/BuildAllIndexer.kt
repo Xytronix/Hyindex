@@ -11,6 +11,7 @@ import com.hyindex.knowledge.core.index.IndexResult
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.Files
 import java.time.Instant
 
 class BuildAllIndexer(
@@ -23,6 +24,7 @@ class BuildAllIndexer(
     fun run(force: Boolean = false, extraPlugins: List<CorpusIndexer> = emptyList()): List<IndexResult> {
         val results = mutableListOf<IndexResult>()
         ctx.indexDir.mkdirs()
+        Files.deleteIfExists(File(ctx.indexDir, "version_meta.json").toPath())
         val requested = if (corpora.isEmpty()) {
             emptySet()
         } else {
@@ -40,7 +42,7 @@ class BuildAllIndexer(
                 results += safe(plugin.corpus) { plugin.index(ctx) }
             }
         }
-        versionInfo?.let { writeVersionMeta(ctx.indexDir, it) }
+        if (results.all { it.ok }) versionInfo?.let { writeVersionMeta(ctx.indexDir, it) }
         return results
     }
 

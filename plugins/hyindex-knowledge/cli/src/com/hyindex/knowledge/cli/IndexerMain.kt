@@ -16,7 +16,11 @@ import com.hyindex.knowledge.core.version.RetentionPruner
 import com.hyindex.knowledge.core.version.VersionResolver
 import com.hyindex.knowledge.index.BuildAllIndexer
 import com.hyindex.knowledge.index.CorpusVectorRebuilder
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import java.nio.file.Files
 import java.lang.management.ManagementFactory
 
 
@@ -64,10 +68,13 @@ private fun readRecordedVersion(versionDir: java.io.File): String? {
 }
 
 
-private fun readRecordedTree(versionDir: java.io.File): String? {
-    val meta = java.io.File(versionDir, "version_meta.json")
-    if (!meta.exists()) return null
-    return Regex("\"treeRevision\"\\s*:\\s*\"([^\"]+)\"").find(meta.readText())?.groupValues?.get(1)
+internal fun isCompletedGitRevision(versionDir: File, versionInfo: HytaleVersionDetector.HytaleVersionInfo): Boolean {
+    if (versionInfo.fullRevision.isBlank() || versionInfo.treeRevision.isBlank()) return false
+    return runCatching {
+        val meta = Json.parseToJsonElement(File(versionDir, "version_meta.json").readText()).jsonObject
+        meta["fullRevision"]?.jsonPrimitive?.content == versionInfo.fullRevision &&
+            meta["treeRevision"]?.jsonPrimitive?.content == versionInfo.treeRevision
+    }.getOrDefault(false)
 }
 
 private fun seedFromPrevious(fromDir: java.io.File, toDir: java.io.File, log: com.hyindex.knowledge.core.logging.LogProvider) {
@@ -204,10 +211,11 @@ fun main(args: Array<String>) {
                 ?.takeIf { File(it, "knowledge.db").exists() }
         } else null
 
-        if (priorDir != null && readRecordedTree(priorDir) == versionInfo.treeRevision) {
-            log.info("Patchline $patchline: content unchanged since ${priorDir.name} (tree ${versionInfo.treeRevision.take(12)}) — skipping")
+        if (priorDir != null && isCompletedGitRevision(priorDir, versionInfo)) {
+            log.info("Patchline $patchline: revision already indexed in ${priorDir.name} (${versionInfo.fullRevision.take(12)}) — skipping")
             continue
         }
+        Files.deleteIfExists(File(versionDir, "version_meta.json").toPath())
         if (opts.force && versionDir.exists()) {
             log.info("Patchline $patchline: --force; wiping $slug")
             wipeVersionIndex(versionDir)

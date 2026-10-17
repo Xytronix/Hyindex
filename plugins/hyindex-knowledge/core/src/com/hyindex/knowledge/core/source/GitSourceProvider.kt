@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.util.Base64
 
 object GitSourceProvider {
@@ -34,13 +35,14 @@ object GitSourceProvider {
         )
     }
 
-    private fun git(dir: File, vararg a: String, token: String? = null): String {
+    private fun git(dir: File, vararg a: String, token: String? = null, input: String? = null): String {
         val argv = listOf("git") + a.toList()
         lastGitArgv = argv
         val p = ProcessBuilder(argv).directory(dir).redirectErrorStream(true)
         val env = p.environment()
         env.putAll(authEnv(token))
         val proc = p.start()
+        proc.outputStream.bufferedWriter().use { if (input != null) it.write(input) }
         val out = proc.inputStream.bufferedReader().readText()
         check(proc.waitFor() == 0) { "git ${a.joinToString(" ")} failed: $out" }
         return out.trim()
@@ -59,14 +61,87 @@ object GitSourceProvider {
         return repo
     }
 
+    @Synchronized
     fun worktreeFor(repo: File, patchline: String, cacheBase: File, token: String? = null): File {
         val branch = PATCHLINE_BRANCH[patchline] ?: error("unknown patchline: $patchline")
+        val revision = git(repo, "rev-parse", "--verify", "origin/$branch^{commit}")
         val wt = File(cacheBase, "worktrees/$patchline")
-        runCatching { git(repo, "worktree", "remove", "--force", wt.absolutePath) }
-        runCatching { git(repo, "worktree", "prune") }
-        git(repo, "worktree", "add", "--force", "--detach", wt.absolutePath, "origin/$branch", token = token)
+        check(!Files.isSymbolicLink(wt.toPath()) && wt.canonicalFile.toPath().startsWith(cacheBase.canonicalFile.toPath())) {
+            "Refusing worktree outside cache: $wt"
+        }
+        val existing = worktreeRecord(repo, wt)
+        if (existing != null) {
+            val lock = existing.firstOrNull { it == "locked" || it.startsWith("locked ") }
+            check(lock == null) { "Worktree $wt is $lock; inspect it before retrying" }
+            check(wt.isDirectory && File(wt, ".git").isFile) {
+                "Worktree $wt is incomplete; inspect it before retrying"
+            }
+            val gitDir = File(git(wt, "rev-parse", "--absolute-git-dir"))
+            val backlink = File(gitDir, "gitdir")
+            check(commonGitDir(wt) == commonGitDir(repo) && backlink.isFile &&
+                File(backlink.readText().trim()).canonicalFile == File(wt, ".git").canonicalFile) {
+                "Worktree $wt points to a different repository or checkout; preserving it"
+            }
+            check(git(wt, "status", "--porcelain", "--untracked-files=all", "--ignored=matching").isEmpty()) {
+                "Worktree $wt has local changes or untracked files; preserving it"
+            }
+            if (git(wt, "rev-parse", "HEAD") == revision) return wt
+        } else {
+            check(!Files.exists(wt.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                "Worktree path $wt already exists without a registration; preserving it"
+            }
+        }
+
+        check(cacheBase.usableSpace >= 64L * 1024 * 1024) { "Insufficient free space for worktree $wt" }
+        val missing = git(repo, "rev-list", "--objects", "--no-object-names", "--missing=print", "--no-walk", revision)
+            .lineSequence().filter { it.startsWith('?') }.map { it.drop(1) }.toList()
+        if (missing.isNotEmpty()) {
+            git(repo, "-c", "fetch.negotiationAlgorithm=noop", "fetch", "origin", "--no-tags",
+                "--no-write-fetch-head", "--recurse-submodules=no", "--no-auto-maintenance", "--filter=blob:none", "--stdin",
+                token = token, input = missing.joinToString("\n", postfix = "\n"))
+        }
+        val requiredBytes = git(repo, "ls-tree", "-r", "-l", "-z", revision, token = token)
+            .splitToSequence('\u0000').filter { it.isNotEmpty() }.fold(64L * 1024 * 1024) { total, entry ->
+                val size = entry.substringBefore('\t').substringAfterLast(' ').toLongOrNull() ?: 0L
+                Math.addExact(total, Math.addExact(size, 4096L))
+            }
+        check(cacheBase.usableSpace >= requiredBytes) {
+            "Insufficient free space for worktree $wt: need at least $requiredBytes bytes, available ${cacheBase.usableSpace}"
+        }
+        if (existing != null) git(repo, "worktree", "remove", wt.absolutePath)
+        Files.createDirectories(wt.parentFile.toPath())
+        Files.createDirectory(wt.toPath())
+        try {
+            git(repo, "worktree", "add", "--detach", wt.absolutePath, revision, token = token)
+        } catch (failure: Exception) {
+            try {
+                val partial = worktreeRecord(repo, wt)
+                if (partial != null) {
+                    val lock = partial.firstOrNull { it == "locked" || it.startsWith("locked ") }
+                    check(lock == null || lock == "locked initializing") {
+                        "Preserving newly locked worktree $wt: $lock"
+                    }
+                    git(repo, "worktree", "remove", "--force", "--force", wt.absolutePath)
+                }
+                check(!wt.exists() || wt.deleteRecursively()) { "Could not remove failed checkout $wt" }
+            } catch (cleanupFailure: Exception) {
+                failure.addSuppressed(cleanupFailure)
+            }
+            throw failure
+        }
         return wt
     }
+
+    private fun commonGitDir(repo: File): File = File(git(repo, "rev-parse", "--git-common-dir")).let {
+        (if (it.isAbsolute) it else File(repo, it.path)).canonicalFile
+    }
+
+    private fun worktreeRecord(repo: File, worktree: File): List<String>? =
+        git(repo, "worktree", "list", "--porcelain", "-z")
+            .split("\u0000\u0000").map { it.split('\u0000') }
+            .firstOrNull { record ->
+                record.firstOrNull()?.removePrefix("worktree ")?.let { File(it).canonicalFile } == worktree.canonicalFile
+            }
 
     fun deriveVersion(worktree: File, patchline: String): HytaleVersionDetector.HytaleVersionInfo {
         val full = git(worktree, "rev-parse", "HEAD")

@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.hyindex"
-version = "1.0.0"
+version = "1.3.1"
 
 repositories {
     mavenCentral()

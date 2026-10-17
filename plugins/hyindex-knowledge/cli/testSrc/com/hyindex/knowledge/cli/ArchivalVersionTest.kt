@@ -51,7 +51,7 @@ class ArchivalVersionTest {
                 ?.takeIf { File(it, "knowledge.db").exists() }
         } else null
 
-        if (priorDir != null && readRecordedTree(priorDir) == versionInfo.treeRevision) {
+        if (priorDir != null && isCompletedGitRevision(priorDir, versionInfo)) {
             return priorDir to emptyList()
         }
         if (force && versionDir.exists()) wipeVersionIndex(versionDir)
@@ -71,12 +71,6 @@ class ArchivalVersionTest {
         val results = BuildAllIndexer(ctx, docRoots = emptyList(), versionInfo = versionInfo, corpora = setOf("code")).run(force)
         db.close()
         return versionDir to results
-    }
-
-    private fun readRecordedTree(versionDir: File): String? {
-        val meta = File(versionDir, "version_meta.json")
-        if (!meta.exists()) return null
-        return Regex("\"treeRevision\"\\s*:\\s*\"([^\"]+)\"").find(meta.readText())?.groupValues?.get(1)
     }
 
     private fun wipeVersionIndex(versionDir: File) {
@@ -151,21 +145,23 @@ class ArchivalVersionTest {
     }
 
     @Test
-    fun `new commit with unchanged tree reuses existing snapshot`() {
+    fun `new commit with unchanged tree publishes current revision with incrementally reused code`() {
         val origin = makeOrigin()
         val base = Files.createTempDirectory("hyindex-arch-tree").toFile()
-
-        runIndex(base, origin)
-        val versionsDir = File(base, "versions")
-        val before = versionsDir.listFiles { f -> f.isDirectory }!!.map { it.name }.toSet()
-        assertThat(before).hasSize(1)
+        val (previous, _) = runIndex(base, origin)
+        val previousMeta = File(previous, "version_meta.json").readText()
 
         git(origin, "commit", "-q", "--allow-empty", "-m", "no-op")
-        runIndex(base, origin)
+        val (current, results) = runIndex(base, origin)
 
-        val after = versionsDir.listFiles { f -> f.isDirectory }!!.map { it.name }.toSet()
-        assertThat(after).isEqualTo(before)
-
+        assertThat(current).isNotEqualTo(previous)
+        assertThat(results.first { it.corpus == "code" }.skipped).isTrue()
+        val expected = GitSourceProvider.deriveVersion(origin, "release")
+        val meta = kotlinx.serialization.json.Json.parseToJsonElement(File(current, "version_meta.json").readText())
+            .let { it as kotlinx.serialization.json.JsonObject }
+        assertThat((meta["fullRevision"] as kotlinx.serialization.json.JsonPrimitive).content).isEqualTo(expected.fullRevision)
+        assertThat((meta["treeRevision"] as kotlinx.serialization.json.JsonPrimitive).content).isEqualTo(expected.treeRevision)
+        assertThat(File(previous, "version_meta.json").readText()).isEqualTo(previousMeta)
         listOf(origin, base).forEach { it.deleteRecursively() }
     }
 
