@@ -69,10 +69,14 @@ object GitSourceProvider {
         check(!Files.isSymbolicLink(wt.toPath()) && wt.canonicalFile.toPath().startsWith(cacheBase.canonicalFile.toPath())) {
             "Refusing worktree outside cache: $wt"
         }
-        val existing = worktreeRecord(repo, wt)
+        val record = worktreeRecord(repo, wt)
+        val lock = record?.firstOrNull { it == "locked" || it.startsWith("locked ") }
+        check(lock == null) { "Worktree $wt is $lock; inspect it before retrying" }
+        if (record != null && !Files.exists(wt.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+            git(repo, "worktree", "remove", wt.absolutePath)
+        }
+        val existing = record?.takeIf { Files.exists(wt.toPath(), LinkOption.NOFOLLOW_LINKS) }
         if (existing != null) {
-            val lock = existing.firstOrNull { it == "locked" || it.startsWith("locked ") }
-            check(lock == null) { "Worktree $wt is $lock; inspect it before retrying" }
             check(wt.isDirectory && File(wt, ".git").isFile) {
                 "Worktree $wt is incomplete; inspect it before retrying"
             }

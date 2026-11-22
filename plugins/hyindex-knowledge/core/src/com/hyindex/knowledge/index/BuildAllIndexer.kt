@@ -24,7 +24,7 @@ class BuildAllIndexer(
     fun run(force: Boolean = false, extraPlugins: List<CorpusIndexer> = emptyList()): List<IndexResult> {
         val results = mutableListOf<IndexResult>()
         ctx.indexDir.mkdirs()
-        Files.deleteIfExists(File(ctx.indexDir, "version_meta.json").toPath())
+        if (versionInfo != null) Files.deleteIfExists(File(ctx.indexDir, "version_meta.json").toPath())
         val requested = if (corpora.isEmpty()) {
             emptySet()
         } else {

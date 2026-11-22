@@ -127,4 +127,25 @@ class BuildAllIndexerTest {
         base.deleteRecursively()
     }
 
+    @Test fun `reembed of a source corpus keeps the live generation visible`() {
+        val base = Files.createTempDirectory("hyindex-reembed-meta").toFile()
+        val slug = "release_b1_2026-01-01-abc1234"
+        val cfg = KnowledgeConfig(indexPath = base.absolutePath, activeVersion = slug)
+        val log = StdoutLogProvider
+        val db = KnowledgeDatabase.forFile(java.io.File(cfg.resolvedIndexPath(), "knowledge.db"), log)
+        val cache = EmbeddingCacheService(EmbeddingCacheDatabase.forFile(java.io.File(base, "embedding-cache.db"), log), log)
+        val ctx = IndexContext(cfg, db, cache, log, NoopProgressReporter)
+        val meta = java.io.File(ctx.indexDir, "version_meta.json")
+        meta.parentFile.mkdirs()
+        meta.writeText("""{"patchline":"release","slug":"$slug","fullRevision":"full","treeRevision":"tree"}""")
+        val recorded = meta.readText()
+
+        BuildAllIndexer(ctx, emptyList(), null, setOf("visual"), false).run(true)
+
+        assertEquals(recorded, meta.readText())
+        assertEquals(slug, com.hyindex.knowledge.core.version.VersionResolver.latestSlug(base, "release"))
+        db.close()
+        base.deleteRecursively()
+    }
+
 }

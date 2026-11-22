@@ -179,6 +179,32 @@ class GitSourceProviderWorktreeTest {
         assertThat(git(repo, "worktree", "list", "--porcelain")).contains(unrelated.canonicalPath)
     }
 
+    @Test
+    fun `recreates a registered worktree whose directory was deleted`() {
+        val repo = repository()
+        val wt = worktree(repo)
+        val unrelated = File(root, "unrelated")
+        git(repo, "worktree", "add", "--detach", unrelated.absolutePath, "HEAD")
+        unrelated.deleteRecursively()
+        wt.deleteRecursively()
+
+        assertThat(File(worktree(repo), "source.txt").readText()).isEqualTo("first revision\n")
+        assertThat(git(repo, "worktree", "list", "--porcelain")).contains(unrelated.canonicalPath)
+    }
+
+    @Test
+    fun `preserves a user locked registration whose directory was deleted`() {
+        val repo = repository()
+        val wt = worktree(repo)
+        git(repo, "worktree", "lock", "--reason", "removable media", wt.absolutePath)
+        wt.deleteRecursively()
+
+        val failure = assertThrows<IllegalStateException> { worktree(repo) }
+
+        assertThat(failure.message).contains("locked", "removable media")
+        assertThat(git(repo, "worktree", "list", "--porcelain")).contains("locked removable media")
+    }
+
     private fun partialClone(): Pair<File, File> {
         val origin = repository()
         repeat(20) { File(origin, "blob$it.txt").writeText("unique blob $it\n") }
